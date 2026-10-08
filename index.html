@@ -201,6 +201,7 @@ main{max-width:1280px;margin:0 auto;padding:20px 16px 70px}
 .stat b .unit{font-size:12px;color:var(--muted);font-style:normal;font-weight:500;margin-left:2px}
 
 .att-btn.on-video{background:#eff6ff;border-color:#1d4ed8;color:#1d4ed8;font-weight:600}
+.att-btn.on-trial{background:#ecfdf5;border-color:#059669;color:#059669;font-weight:600}
 .kp-row{border-top:1px solid var(--border);padding:8px 2px}
 .kp-row:first-child{border-top:none}
 .kp-row summary{display:flex;align-items:center;gap:10px;cursor:pointer;flex-wrap:wrap}
@@ -221,7 +222,7 @@ main{max-width:1280px;margin:0 auto;padding:20px 16px 70px}
 .att-c-leave{background:var(--red-bg);color:var(--red)}
 .att-c-none{background:var(--gray-bg);color:#94a3b8}
 .att-c-makeup{background:var(--green-bg);color:var(--green)}
-.att-c-trial{background:#f5f3ff;color:#8b5cf6}
+.att-c-trial{background:#ecfdf5;color:#059669}
 .mk-sel{max-width:160px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff;color:var(--muted)}
 .att-c-future{background:var(--gray-bg);color:#cbd5e1;font-weight:400}
 .arc-g{margin-bottom:10px}
@@ -260,6 +261,23 @@ main{max-width:1280px;margin:0 auto;padding:20px 16px 70px}
 /* ---------- Toast ---------- */
 #toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%) translateY(16px);background:#0f172a;color:#fff;padding:9px 18px;border-radius:99px;opacity:0;pointer-events:none;transition:.25s;z-index:300;max-width:90vw}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ---------- 移动端优化 ---------- */
+@media(max-width:640px){
+  .week{display:flex;overflow-x:auto;gap:8px;padding-bottom:8px}
+  .daycol{flex:0 0 84vw;min-height:auto}
+  .slotblk{min-height:96px}
+}
+@media(max-width:560px){
+  .mask{padding:0}
+  .modal,.modal-lg{max-width:100%;max-height:100%;height:100%;border-radius:0}
+  .m-head{padding:12px 14px}
+  .m-body{padding:14px}
+  .m-actions{flex-wrap:wrap}
+  .btn-sm{padding:6px 12px;font-size:13px}
+  .att-btn{padding:7px 15px;font-size:13px}
+  .lrow:not(.editing) .cell[data-label="学校"],.lrow:not(.editing) .cell[data-label="届数"],.lrow:not(.editing) .cell[data-label="备注"]{display:none}
+}
 </style>
 </head>
 <body>
@@ -332,6 +350,7 @@ function lessonDone(l){return l.status==='done'||(l.status!=='cancelled'&&isPast
 function lessonBadge(l){
   if(l.status==='cancelled')return['已取消','b-gray'];
   if(lessonFb(l))return['已反馈','b-green'];
+  if(l.skipFb)return['已跳过','b-gray'];
   if(l.status==='done'||isPastLesson(l))return['待反馈','b-amber'];
   return['',''];
 }
@@ -924,6 +943,14 @@ function switchPage(p){
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===p));
   renderPage();
 }
+function scrollWeekToToday(){
+  const wk=document.querySelector('#app .week');
+  const td=document.querySelector('#app .daycol.today');
+  if(!wk||!td)return;
+  if(wk.scrollWidth<=wk.clientWidth+4)return;
+  const r=td.getBoundingClientRect(),wr=wk.getBoundingClientRect();
+  wk.scrollLeft+=Math.round(r.left-wr.left)-12;
+}
 function renderPage(){
   const el=$('#app');
   if(ui.page==='dashboard')el.innerHTML=dashboardHTML();
@@ -933,6 +960,7 @@ function renderPage(){
   else el.innerHTML=feedbackHTML();
   window.scrollTo(0,0);
   renderSyncTip();
+  if(ui.page==='schedule'){scrollWeekToToday();setTimeout(scrollWeekToToday,60);}
 }
 
 /* ================= 总览页 ================= */
@@ -942,7 +970,7 @@ function dashboardHTML(){
   const activeN=db.students.filter(s=>s.status==='active').length;
   const ws=mondayOf(now),we=addDays(ws,6);
   const weekN=db.lessons.filter(l=>l.date>=fmtDate(ws)&&l.date<=fmtDate(we)&&l.status!=='cancelled').length;
-  const pending=db.lessons.filter(l=>lessonDone(l)&&l.status!=='cancelled'&&!lessonFb(l)).sort((a,b)=>b.date.localeCompare(a.date)||b.start.localeCompare(a.start));
+  const pending=db.lessons.filter(l=>lessonDone(l)&&l.status!=='cancelled'&&!lessonFb(l)&&!l.skipFb).sort((a,b)=>b.date.localeCompare(a.date)||b.start.localeCompare(a.start));
   const monthN=db.lessons.filter(l=>l.date.slice(0,7)===t.slice(0,7)&&lessonDone(l)&&l.status!=='cancelled').length;
   const today=db.lessons.filter(l=>l.date===t&&l.status!=='cancelled').sort((a,b)=>a.start.localeCompare(b.start));
   const d7=new Date();d7.setDate(d7.getDate()-6);
@@ -992,7 +1020,7 @@ function dashboardHTML(){
   const pendHTML=pending.length?('<div>'+pending.slice(0,8).map(l=>
     '<div class="item"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">'
     +'<span>'+dateCN(l.date)+'（周'+WD_CN[parseDate(l.date).getDay()]+'）'+esc(clsNameById(l.classId))+' '+l.start+'</span>'
-    +'<button class="btn-sm btn btn-primary" onclick="goFeedback(\''+l.id+'\')">写反馈</button></div></div>'
+    +'<span style="display:flex;gap:6px"><button class="btn-sm btn" onclick="skipFb(\''+l.id+'\')">跳过</button><button class="btn-sm btn btn-primary" onclick="goFeedback(\''+l.id+'\')">写反馈</button></span></div></div>'
   ).join('')+'</div><p class="sub" style="margin-top:8px">共 '+pending.length+' 节课待反馈</p>'):emptyCard('全部反馈已写完 👍');
 
   return (db.isDemo?'<div class="demo-tip"><span>👋 当前内置了示例数据，方便你快速了解各项功能。正式使用前点右侧按钮清空重来（也可以先体验，随时清空）。</span><button class="btn btn-sm" onclick="resetData()">清空示例数据</button></div>':'')
@@ -1889,6 +1917,24 @@ function addCourseLesson(id){
   db.lessons.push({id:uid(),date:fmtDate(d),start:c.slotStart,end:c.slotEnd,classId:mainClass,room:c.slotRoom,topic:'',status:'normal',courseId:id});
   save();openCourseMgr();renderPage();toast('已在 '+fmtDate(d)+' 补 1 节');
 }
+function skipFb(id){
+  const l=db.lessons.find(x=>x.id===id);
+  if(!l)return;
+  l.skipFb=true;save();renderPage();
+  toast('已跳过本节反馈（可随时恢复）');
+}
+function unskipFb(id){
+  const l=db.lessons.find(x=>x.id===id);
+  if(!l)return;
+  delete l.skipFb;save();renderPage();
+  toast('已恢复待反馈');
+}
+function skipFbFromForm(id){
+  const l=db.lessons.find(x=>x.id===id);
+  if(l)l.skipFb=true;
+  save();closeModal();renderPage();
+  toast('已跳过本节反馈');
+}
 function lessonCard(l){
   const fb=lessonFb(l);
   const seq=courseSeq(l);
@@ -1909,7 +1955,7 @@ function lessonCard(l){
     +'<button class="btn-sm btn" onclick="openLessonForm(\''+l.id+'\')">编辑</button>'
     +(past||attN?'<button class="btn-sm btn" onclick="openAttendance(\''+l.id+'\')">考勤</button>':'')
     +(fb?'<button class="btn-sm btn" onclick="openFbEdit(\''+fb.id+'\')">看反馈</button>'
-        :(past?'<button class="btn-sm btn btn-primary" onclick="goFeedback(\''+l.id+'\')">写反馈</button>':''))
+        :(past?(l.skipFb?'<button class="btn-sm btn" onclick="unskipFb(\''+l.id+'\')">恢复反馈</button>':'<button class="btn-sm btn btn-primary" onclick="goFeedback(\''+l.id+'\')">写反馈</button><button class="btn-sm btn" onclick="skipFb(\''+l.id+'\')">跳过</button>'):''))
     +'</div></div>';
 }
 function openLessonForm(id){
@@ -2083,8 +2129,14 @@ function renderAttRows(){
   $('#att-rows').innerHTML=rows.map(s=>{
     const cur=merged[s.id]||'';
     const isTrial=s.status==='trial'&&s.trial&&c&&s.trial.courseId===c.id;
-    const showTrial=isTrial||cur==='trial';
-    const states=showTrial?[['present','√'],['video','视'],['leave','假'],['trial','试']]:[['present','√'],['video','视'],['leave','假']];
+    const enrolledTrial=!!(s.trial&&s.trial.result==='enrolled'&&c&&s.trial.courseId===c.id);
+    let trialBound='';
+    if(enrolledTrial){
+      db.lessons.forEach(function(x){if(x.attendance&&x.attendance[s.id]==='trial'&&(!trialBound||x.date>trialBound))trialBound=x.date});
+      if(!trialBound&&s.trial.resolvedAt)trialBound=fmtDate(new Date(s.trial.resolvedAt));
+    }
+    const canTrialBtn=isTrial||cur==='trial'||(enrolledTrial&&(!trialBound||l.date<=trialBound));
+    const states=canTrialBtn?[['present','√'],['video','视'],['leave','假'],['trial','试']]:[['present','√'],['video','视'],['leave','假']];
     let mkSel='';
     if(s.tmp){
       const mo=makeupOptionsFor(s.id,l);
@@ -2102,11 +2154,24 @@ function renderAttRows(){
       +mkSel
       +'<span class="att-btns">'
       +states.map(p=>
-        '<button class="att-btn'+(cur===p[0]?' on-'+p[0]:'')+'" data-s="'+s.id+'" data-v="'+p[0]+'" onclick="setAtt(this)">'+p[1]+'</button>').join('')
+        '<button class="att-btn'+(cur===p[0]?' on-'+p[0]:'')+'"'+(p[0]==='trial'?' title="试听（不计费）"':'')+' data-s="'+s.id+'" data-v="'+p[0]+'" onclick="setAtt(this)">'+p[1]+'</button>').join('')
       +'</span></div>';
   }).join('')||'<p class="sub">暂无学员</p>';
   var el=$('#att-extra-list');
   if(el)el.innerHTML=attExtra.map(e=>' <span class="badge b-blue">'+esc(e.name)+' <b style="cursor:pointer" onclick="removeAttExtra(\''+e.id+'\')">✕</b></span>').join('');
+  updateAttStats();
+}
+function updateAttStats(){
+  const el=document.getElementById('att-stats');
+  if(!el)return;
+  let p=0,v=0,lv=0,tr=0;
+  document.querySelectorAll('#modal-root .att-btns').forEach(g=>{
+    const on=g.querySelector('.att-btn.on-present,.att-btn.on-video,.att-btn.on-leave,.att-btn.on-trial');
+    if(!on)return;
+    const vv=on.dataset.v;
+    if(vv==='present')p++;else if(vv==='video')v++;else if(vv==='leave')lv++;else if(vv==='trial')tr++;
+  });
+  el.innerHTML='✓ 出勤 <b>'+p+'</b> · 视 <b>'+v+'</b> · 假 <b>'+lv+'</b>'+(tr?' · 试 <b>'+tr+'</b>':'');
 }
 /* 临时学员改为搜索添加（见 addAttExtraById），旧下拉方式已移除 */
 function removeAttExtra(sid){
@@ -2121,7 +2186,7 @@ function openAttendance(id){
   const headName=(c&&c.classIds.length>1)?(c.name+'（合班）'):clsNameById(l.classId);
   showModal('考勤 · '+dateCN(l.date)+' '+esc(headName)+' '+l.start,
     '<p class="sub" style="margin-bottom:8px">√ 出勤（正常计费）· 视 补视频录课（正常计费）· 假 请假（不计费）。点击标记，再点一次取消。</p>'
-    +'<div class="toolbar" style="margin-bottom:6px"><button class="btn-sm btn" onclick="quickAllPresent()">全部√</button></div>'
+    +'<div class="toolbar" style="margin-bottom:6px"><button class="btn-sm btn" onclick="quickAllPresent()">全部√</button><span style="flex:1"></span><span class="sub" id="att-stats"></span></div>'
     +'<div id="att-rows"></div>'
     +'<div class="att-extra"><span class="sub">临时学员（其他班来上课）：</span><div style="position:relative"><input id="att-extra-q" placeholder="输入姓名搜索…" autocomplete="off" oninput="attExtraSearch(this.value)" onblur="setTimeout(function(){var b=document.getElementById(\'att-extra-sug\');if(b)b.style.display=\'none\'},250)"><div id="att-extra-sug" class="sug"></div></div><span id="att-extra-list"></span></div>'
     +'<div class="m-actions"><button type="button" class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveAttendance(\''+id+'\')">保存考勤</button></div>',
@@ -2132,13 +2197,19 @@ function setAtt(btn){
   const was=btn.classList.contains('on-present')||btn.classList.contains('on-video')||btn.classList.contains('on-leave')||btn.classList.contains('on-absent')||btn.classList.contains('on-trial');
   g.querySelectorAll('.att-btn').forEach(b=>b.className='att-btn');
   if(!was)btn.classList.add('on-'+btn.dataset.v);
+  updateAttStats();
 }
 function quickAllPresent(){
   document.querySelectorAll('#modal-root .att-btns').forEach(g=>{
+    const tBtn=g.querySelector('[data-v=trial]');
+    const wasTrial=tBtn?tBtn.classList.contains('on-trial'):false;
+    const st=tBtn?db.students.find(x=>x.id===tBtn.dataset.s):null;
+    const useTrial=!!(tBtn&&((st&&st.status==='trial')||wasTrial));
     g.querySelectorAll('.att-btn').forEach(b=>b.className='att-btn');
-    const p=g.querySelector('[data-v=trial]')||g.querySelector('[data-v=present]');
+    const p=useTrial?tBtn:g.querySelector('[data-v=present]');
     if(p)p.classList.add('on-'+p.dataset.v);
   });
+  updateAttStats();
 }
 function makeupOptionsFor(sid,X){
   const s=db.students.find(x=>x.id===sid);
@@ -2260,7 +2331,7 @@ function lessonOptionsHTML(selectedId){
   return ls.map(l=>{
     const fb=lessonFb(l);
     return '<option value="'+l.id+'"'+(l.id===selectedId?' selected':'')+'>'
-      +dateCN(l.date)+' '+WEEK_CN[dowOf(l.date)]+' '+l.start+' '+esc(clsNameById(l.classId))+(fb?'（已反馈）':'')+'</option>';
+      +dateCN(l.date)+' '+WEEK_CN[dowOf(l.date)]+' '+l.start+' '+esc(clsNameById(l.classId))+(fb?'（已反馈）':(l.skipFb?'（已跳过）':''))+'</option>';
   }).join('');
 }
 const TONE_OPTS=[['wx','微信口语（推荐）'],['formal','正式书面'],['warm','温和鼓励']];
@@ -2301,6 +2372,7 @@ function fbModal(fb,lessonId){
     +'<button type="button" class="btn" style="background:#7c3aed;border-color:#7c3aed;color:#fff" onclick="generateFbWithAI()">✨ AI 生成反馈</button>'
     +'<button type="button" class="btn" onclick="copyFbFullForm()">📋 复制全班反馈</button>'
     +'<button type="button" class="btn" onclick="fillQuizToFeedback()">📊 填入小测分析</button>'
+    +(lid&&!fb.id?'<button type="button" class="btn" onclick="skipFbFromForm(\''+lid+'\')">跳过本课反馈</button>':'')
     +'<span style="flex:1"></span>'
     +'<button type="button" class="btn" onclick="closeModal()">取消</button>'
     +'<button class="btn btn-primary">保存反馈</button>'
