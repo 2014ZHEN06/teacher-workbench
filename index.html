@@ -207,6 +207,7 @@ main{max-width:1280px;margin:0 auto;padding:20px 16px 70px}
 .kp-row summary b{min-width:110px}
 .kp-row summary .sub{margin-left:auto}
 .alertbar{background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:14px;display:flex;flex-direction:column;gap:6px;line-height:1.6}
+.cloud-tip{background:#eff6ff;border:1px solid #93c5fd;color:#1e40af;border-radius:10px;padding:9px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
 .att-extra{margin-top:10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .att-extra select{padding:5px 8px;border:1px solid var(--border);border-radius:8px;max-width:230px;background:#fff}
 #att-extra-q{padding:5px 8px;border:1px solid var(--border);border-radius:8px;width:170px;background:#fff;font-family:inherit;font-size:13px}
@@ -804,10 +805,10 @@ async function saveQuizDocToDir(file,quizName,dateStr){
 
 /* ================= 数据层 ================= */
 let db;
-function save(){localStorage.setItem(KEY,JSON.stringify(db))}
+function save(){localStorage.setItem(KEY,JSON.stringify(db));scheduleAutoSync()}
 function defaultKeywords(){return{good:['认真听讲','思路清晰','配合度高','计算较严谨','步骤规范','主动提问','状态有进步'],bad:['做题需细心','计算速度需提高','审题不够细致','步骤不够规范','检查意识需加强','复习需加强']}}
-function migrate(d){d=d||{};d.classes=d.classes||[];d.students=d.students||[];d.lessons=d.lessons||[];d.templates=d.templates||[];d.feedbacks=d.feedbacks||[];d.todos=d.todos||[];d.phrases=d.phrases||[];d.courses=d.courses||[];d.courses.forEach(function(c){if(!c.classIds)c.classIds=c.classId?[c.classId]:[]});d.quizzes=d.quizzes||[];d.settings=d.settings||{};d.settings.apiKey=d.settings.apiKey||'';d.settings.model=d.settings.model||'';if(!d.settings.model||d.settings.model==='deepseek-chat'||d.settings.model==='deepseek-reasoner')d.settings.model='deepseek-flash';d.settings.quizDirName=d.settings.quizDirName||'';d.settings.modelOptions=d.settings.modelOptions||[];d.settings.fbTone=d.settings.fbTone||'wx';d.settings.fbDetail=d.settings.fbDetail||'brief';d.settings.cloudUrl=d.settings.cloudUrl||'';d.settings.cloudKey=d.settings.cloudKey||'';d.settings.cloudId=d.settings.cloudId||'';d.settings.lastSyncAt=d.settings.lastSyncAt||0;d.settings.lastSyncDir=d.settings.lastSyncDir||'';if(!d.relations||!d.relations.length)d.relations=['爸爸','妈妈'];d.keywords=d.keywords||{};if(!d.keywords.good)d.keywords.good=defaultKeywords().good;if(!d.keywords.bad)d.keywords.bad=defaultKeywords().bad;return d}
-function emptyDb(){return{isDemo:false,classes:[],students:[],lessons:[],templates:[],feedbacks:[],todos:[],phrases:[],courses:[],quizzes:[],relations:['爸爸','妈妈'],settings:{apiKey:'',model:'deepseek-flash',quizDirName:'',modelOptions:[],fbTone:'wx',fbDetail:'brief',cloudUrl:'',cloudKey:'',cloudId:'',lastSyncAt:0,lastSyncDir:''},keywords:defaultKeywords()}}
+function migrate(d){d=d||{};d.classes=d.classes||[];d.students=d.students||[];d.lessons=d.lessons||[];d.templates=d.templates||[];d.feedbacks=d.feedbacks||[];d.todos=d.todos||[];d.phrases=d.phrases||[];d.courses=d.courses||[];d.courses.forEach(function(c){if(!c.classIds)c.classIds=c.classId?[c.classId]:[]});d.quizzes=d.quizzes||[];d.settings=d.settings||{};d.settings.apiKey=d.settings.apiKey||'';d.settings.model=d.settings.model||'';if(!d.settings.model||d.settings.model==='deepseek-chat'||d.settings.model==='deepseek-reasoner')d.settings.model='deepseek-flash';d.settings.quizDirName=d.settings.quizDirName||'';d.settings.modelOptions=d.settings.modelOptions||[];d.settings.fbTone=d.settings.fbTone||'wx';d.settings.fbDetail=d.settings.fbDetail||'brief';d.settings.cloudUrl=d.settings.cloudUrl||'';d.settings.cloudKey=d.settings.cloudKey||'';d.settings.cloudId=d.settings.cloudId||'';d.settings.lastSyncAt=d.settings.lastSyncAt||0;d.settings.lastSyncDir=d.settings.lastSyncDir||'';if(d.settings.cloudAuto===undefined)d.settings.cloudAuto=true;d.settings.lastCloudSeen=d.settings.lastCloudSeen||0;if(!d.relations||!d.relations.length)d.relations=['爸爸','妈妈'];d.keywords=d.keywords||{};if(!d.keywords.good)d.keywords.good=defaultKeywords().good;if(!d.keywords.bad)d.keywords.bad=defaultKeywords().bad;return d}
+function emptyDb(){return{isDemo:false,classes:[],students:[],lessons:[],templates:[],feedbacks:[],todos:[],phrases:[],courses:[],quizzes:[],relations:['爸爸','妈妈'],settings:{apiKey:'',model:'deepseek-flash',quizDirName:'',modelOptions:[],fbTone:'wx',fbDetail:'brief',cloudUrl:'',cloudKey:'',cloudId:'',lastSyncAt:0,lastSyncDir:'',cloudAuto:true,lastCloudSeen:0},keywords:defaultKeywords()}}
 function load(){
   try{const s=localStorage.getItem(KEY);if(s)return migrate(JSON.parse(s))}catch(e){}
   return seed();
@@ -887,7 +888,7 @@ function seed(){
     {id:uid(),text:'准备高一「连接体问题」专题讲义',due:null,done:false,createdAt:Date.now()}
   ];
   const phrases=['课堂专注度高，参与积极','概念理解到位，解题规范','计算准确率有待提高，需多练基础题','能主动提问，思维活跃','审题需更细心，注意单位换算','较上次有明显进步，继续保持'];
-  return{isDemo:true,classes,students,lessons,templates,feedbacks,todos,phrases,courses,quizzes:[],relations:['爸爸','妈妈'],settings:{apiKey:'',model:'deepseek-flash',quizDirName:'',modelOptions:[],fbTone:'wx',fbDetail:'brief',cloudUrl:'',cloudKey:'',cloudId:'',lastSyncAt:0,lastSyncDir:''},keywords:defaultKeywords()};
+  return{isDemo:true,classes,students,lessons,templates,feedbacks,todos,phrases,courses,quizzes:[],relations:['爸爸','妈妈'],settings:{apiKey:'',model:'deepseek-flash',quizDirName:'',modelOptions:[],fbTone:'wx',fbDetail:'brief',cloudUrl:'',cloudKey:'',cloudId:'',lastSyncAt:0,lastSyncDir:'',cloudAuto:true,lastCloudSeen:0},keywords:defaultKeywords()};
 }
 
 /* ================= 通用 UI ================= */
@@ -931,6 +932,7 @@ function renderPage(){
   else if(ui.page==='quiz')el.innerHTML=quizHTML();
   else el.innerHTML=feedbackHTML();
   window.scrollTo(0,0);
+  renderSyncTip();
 }
 
 /* ================= 总览页 ================= */
@@ -1019,7 +1021,7 @@ function dashboardHTML(){
     +'<button class="btn btn-danger" onclick="resetData()">清空全部数据</button>'
     +'</div>'
     +'<div style="border-top:1px dashed var(--border);margin-top:12px;padding-top:10px">'
-    +'<div class="toolbar"><span>☁️ <b>云同步</b></span><span class="sub">'+(db.settings.cloudUrl?'已配置 · '+(db.settings.lastSyncAt?((db.settings.lastSyncDir||'同步')+'于 '+(function(t){const d=new Date(t);return (d.getMonth()+1)+'月'+d.getDate()+'日 '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')})(db.settings.lastSyncAt)):'尚未同步过'):'未配置（手机/平板/电脑互通需要它）')+'</span></div>'
+    +'<div class="toolbar"><span>☁️ <b>云同步</b></span><span class="sub">'+(db.settings.cloudUrl?('已配置'+(db.settings.cloudAuto!==false?'（自动）':'')+' · '+(db.settings.lastSyncAt?((db.settings.lastSyncDir||'同步')+'于 '+(function(t){const d=new Date(t);return (d.getMonth()+1)+'月'+d.getDate()+'日 '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')})(db.settings.lastSyncAt)):'尚未同步过')):'未配置（手机/平板/电脑互通需要它）')+'</span></div>'
     +'<div class="toolbar" style="margin-top:8px">'
     +(db.settings.cloudUrl?'<button class="btn btn-primary" onclick="cloudUpload()">⬆ 上传到云</button><button class="btn" onclick="cloudDownload()">⬇ 从云下载</button><button class="btn" onclick="openCloudSettings()">⚙️ 云同步设置</button>':'<button class="btn btn-primary" onclick="openCloudSettings()">⚙️ 配置云同步</button>')
     +'</div></div></div>';
@@ -3229,6 +3231,89 @@ function copyQuizAll(id){
 }
 
 /* ================= 云同步 ================= */
+let _autoTimer=null,_autoBusy=false,_autoDirty=false,_noAuto=false,syncTip='';
+const AUTO_SYNC_DELAY=60000;
+function scheduleAutoSync(){
+  if(_noAuto)return;
+  _autoDirty=true;
+  const s=db.settings||{};
+  if(!s.cloudUrl||!s.cloudKey||!s.cloudId||s.cloudAuto===false)return;
+  if(_autoBusy||_autoTimer)return;
+  _autoTimer=setTimeout(function(){_autoTimer=null;autoSyncNow()},AUTO_SYNC_DELAY);
+}
+async function autoSyncNow(){
+  const s=db.settings||{};
+  if(!_autoDirty||_autoBusy)return;
+  if(!s.cloudUrl||!s.cloudKey||!s.cloudId||s.cloudAuto===false)return;
+  _autoBusy=true;
+  const hdr={'apikey':s.cloudKey,'Authorization':'Bearer '+s.cloudKey};
+  try{
+    const g=await fetch(s.cloudUrl+'/rest/v1/ptw_sync?id=eq.'+encodeURIComponent(s.cloudId)+'&select=updated_at',{headers:hdr});
+    if(!g.ok)throw new Error('HTTP '+g.status);
+    const arr=await g.json();
+    if(arr.length){
+      const cloudTs=new Date(arr[0].updated_at).getTime();
+      if(s.lastCloudSeen!==cloudTs){
+        syncTip=(s.lastCloudSeen===0)?'cloudhasdata':'conflict';
+        renderSyncTip();
+        return;
+      }
+    }
+    _autoDirty=false;
+    const r=await fetch(s.cloudUrl+'/rest/v1/ptw_sync',{
+      method:'POST',
+      headers:Object.assign({'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=representation'},hdr),
+      body:JSON.stringify([{id:s.cloudId,data:JSON.parse(JSON.stringify(db)),updated_at:new Date().toISOString()}])
+    });
+    if(!r.ok){_autoDirty=true;throw new Error('HTTP '+r.status)}
+    const j=await r.json().catch(function(){return null});
+    if(j&&j[0]&&j[0].updated_at)s.lastCloudSeen=new Date(j[0].updated_at).getTime();
+    else s.lastCloudSeen=Date.now();
+    s.lastSyncAt=Date.now();s.lastSyncDir='自动上传';
+    syncTip='';
+    _noAuto=true;save();_noAuto=false;
+    renderSyncTip();
+  }catch(e){
+    if(_autoDirty){
+      syncTip='autofail';
+      renderSyncTip();
+      if(_autoTimer)clearTimeout(_autoTimer);
+      _autoTimer=setTimeout(function(){_autoTimer=null;autoSyncNow()},AUTO_SYNC_DELAY*2);
+    }
+  }finally{_autoBusy=false}
+}
+async function cloudCheckOnOpen(){
+  const s=db.settings||{};
+  if(!s.cloudUrl||!s.cloudKey||!s.cloudId)return;
+  const mr=document.getElementById('modal-root');
+  if(mr&&mr.classList.contains('show')){setTimeout(cloudCheckOnOpen,4000);return}
+  const hdr={'apikey':s.cloudKey,'Authorization':'Bearer '+s.cloudKey};
+  try{
+    const g=await fetch(s.cloudUrl+'/rest/v1/ptw_sync?id=eq.'+encodeURIComponent(s.cloudId)+'&select=updated_at',{headers:hdr});
+    if(!g.ok)return;
+    const arr=await g.json();
+    if(!arr.length)return;
+    const cloudTs=new Date(arr[0].updated_at).getTime();
+    if(s.lastCloudSeen!==cloudTs){syncTip=(s.lastCloudSeen===0)?'cloudhasdata':'cloudnewer';renderSyncTip()}
+  }catch(e){}
+}
+function syncTipHTML(){
+  if(syncTip==='cloudnewer')return '<span>☁️ 云端有另一台设备的更新</span><span style="flex:1"></span><button class="btn-sm btn btn-primary" onclick="cloudDownload()">⬇ 从云下载</button><button class="btn-sm btn" onclick="dismissSyncTip()">稍后</button>';
+  if(syncTip==='cloudhasdata')return '<span>☁️ 云端已有数据（本机尚未同步过）</span><span style="flex:1"></span><button class="btn-sm btn btn-primary" onclick="cloudDownload()">⬇ 从云下载</button><button class="btn-sm btn" onclick="dismissSyncTip()">忽略</button>';
+  if(syncTip==='conflict')return '<span>☁️ 云端有另一台设备的修改，本机改动未自动上传</span><span style="flex:1"></span><button class="btn-sm btn btn-primary" onclick="cloudDownload()">下载核对</button><button class="btn-sm btn" onclick="cloudUpload()">仍上传本机</button><button class="btn-sm btn" onclick="dismissSyncTip()">稍后</button>';
+  if(syncTip==='autofail')return '<span>☁️ 自动同步失败（网络问题），将稍后重试</span><span style="flex:1"></span><button class="btn-sm btn" onclick="dismissSyncTip()">知道了</button>';
+  return '';
+}
+function renderSyncTip(){
+  const app=document.getElementById('app');
+  if(!app)return;
+  let el=document.getElementById('cloud-tip');
+  const html=syncTipHTML();
+  if(!html){if(el)el.remove();return}
+  if(!el){el=document.createElement('div');el.id='cloud-tip';app.insertBefore(el,app.firstChild)}
+  el.className='cloud-tip';el.innerHTML=html;
+}
+function dismissSyncTip(){syncTip='';renderSyncTip()}
 function openCloudSettings(){
   const s=db.settings||{};
   showModal('云同步设置（Supabase）',
@@ -3237,14 +3322,19 @@ function openCloudSettings(){
     +'<div class="fi"><label>项目网址（Project URL）</label><input id="cs-url" value="'+esc(s.cloudUrl||'')+'" placeholder="https://xxxx.supabase.co"></div>'
     +'<div class="fi"><label>anon public key</label><input id="cs-key" value="'+esc(s.cloudKey||'')+'" placeholder="eyJhbGciOi...（一长串）"></div>'
     +'<div class="fi"><label>同步名称（自定义的私密串，三台设备必须完全一致）</label><input id="cs-id" value="'+esc(s.cloudId||'')+'" placeholder="例如：wang-physics-8f3k2"></div>'
+    +'<div class="fi"><label class="ck-lb"><input type="checkbox" id="cs-auto"'+(s.cloudAuto===false?'':' checked')+'> 自动同步（改动约 1 分钟后自动上传；检测到冲突会停下并提示）</label></div>'
     +'<div class="m-actions"><button type="button" class="btn" onclick="cloudTest()">测试连接</button><span style="flex:1"></span>'
     +'<button type="button" class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveCloudSettings()">保存</button></div>'
     +'</div>');
 }
 function saveCloudSettings(){
+  const oldId=db.settings.cloudId;
   db.settings.cloudUrl=$('#cs-url').value.trim().replace(/\/+$/,'');
   db.settings.cloudKey=$('#cs-key').value.trim();
   db.settings.cloudId=$('#cs-id').value.trim();
+  db.settings.cloudAuto=$('#cs-auto').checked;
+  if(oldId!==db.settings.cloudId)db.settings.lastCloudSeen=0;
+  syncTip='';
   save();closeModal();renderPage();toast('云同步设置已保存');
 }
 async function cloudTest(){
@@ -3280,7 +3370,7 @@ async function cloudUpload(){
   try{
     const res=await fetch(s.cloudUrl+'/rest/v1/ptw_sync',{
       method:'POST',
-      headers:{'apikey':s.cloudKey,'Authorization':'Bearer '+s.cloudKey,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},
+      headers:{'apikey':s.cloudKey,'Authorization':'Bearer '+s.cloudKey,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=representation'},
       body:JSON.stringify([{id:s.cloudId,data:JSON.parse(JSON.stringify(db)),updated_at:new Date().toISOString()}])
     });
     if(!res.ok){
@@ -3288,8 +3378,12 @@ async function cloudUpload(){
       if(String(m).indexOf('row-level security')>=0){showRlsFix();return}
       throw new Error(m);
     }
+    const jj=await res.json().catch(function(){return null});
+    if(jj&&jj[0]&&jj[0].updated_at)db.settings.lastCloudSeen=new Date(jj[0].updated_at).getTime();
+    else db.settings.lastCloudSeen=Date.now();
+    syncTip='';
     db.settings.lastSyncAt=Date.now();db.settings.lastSyncDir='上传';
-    save();renderPage();
+    _noAuto=true;save();_autoDirty=false;_noAuto=false;renderPage();
     toast('已上传到云，其他设备点「从云下载」即可获取');
   }catch(e){toast('上传失败：'+e.message)}
 }
@@ -3306,12 +3400,14 @@ async function cloudDownload(){
     const ut=cd.updated_at?new Date(cd.updated_at):null;
     const uts=ut?((ut.getMonth()+1)+'月'+ut.getDate()+'日 '+String(ut.getHours()).padStart(2,'0')+':'+String(ut.getMinutes()).padStart(2,'0')):'未知时间';
     if(!confirm('云端数据更新时间：'+uts+'\n下载将覆盖本机的全部数据，确定继续？'))return;
-    const keep={cloudUrl:s.cloudUrl,cloudKey:s.cloudKey,cloudId:s.cloudId};
+    const keep={cloudUrl:s.cloudUrl,cloudKey:s.cloudKey,cloudId:s.cloudId,cloudAuto:s.cloudAuto};
     db=migrate(cd.data);
     db.settings=Object.assign({},db.settings||{},keep);
     const now=Date.now();
     db.settings.lastSyncAt=now;db.settings.lastSyncDir='下载';
-    save();renderPage();
+    db.settings.lastCloudSeen=cd.updated_at?new Date(cd.updated_at).getTime():now;
+    syncTip='';
+    _noAuto=true;save();_autoDirty=false;_noAuto=false;renderPage();
     toast('已从云下载并覆盖本机数据');
   }catch(e){toast('下载失败：'+e.message)}
 }
@@ -3378,6 +3474,7 @@ function checkOrphanLessons(){
 db=load();
 renderPage();
 checkOrphanLessons();
+setTimeout(cloudCheckOnOpen,3000);
 </script>
 </body>
 </html>
