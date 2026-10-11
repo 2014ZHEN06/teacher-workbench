@@ -278,6 +278,14 @@ main{max-width:1280px;margin:0 auto;padding:20px 16px 70px}
   .att-btn{padding:7px 15px;font-size:13px}
   .lrow:not(.editing) .cell[data-label="学校"],.lrow:not(.editing) .cell[data-label="届数"],.lrow:not(.editing) .cell[data-label="备注"]{display:none}
 }
+/* ---------- 计费明细表 / 班级校区选择 ---------- */
+.billtable{border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-top:4px}
+.bill-row{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:6px;padding:8px 12px;border-top:1px solid var(--border);align-items:center;font-size:13px}
+.bill-row:first-child{border-top:none}
+.bill-row span:nth-child(n+2){text-align:right}
+.bill-head{background:var(--gray-bg);font-weight:600;font-size:12px;color:var(--muted)}
+.bill-foot{border-top:2px solid var(--border);font-weight:600}
+.cls-campus{max-width:130px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -440,7 +448,8 @@ function courseRoster(c,fallbackClassId){
 }
 function lessonRoster(l){
   const c=courseOf(l);
-  const base=courseRoster(c,l.classId).filter(s=>!s.joinedAt||s.joinedAt<=l.date||(l.attendance&&l.attendance[s.id]));
+  let base=courseRoster(c,l.classId).filter(s=>!s.joinedAt||s.joinedAt<=l.date||(l.attendance&&l.attendance[s.id]));
+  base=base.filter(s=>!(s.status==='paused'&&s.pausedFrom&&l.date>=s.pausedFrom));
   const seen={};base.forEach(s=>{seen[s.id]=1});
   if(c)db.students.forEach(s=>{
     if(s.status==='trial'&&s.trial&&s.trial.courseId===c.id&&!seen[s.id]&&(!s.joinedAt||s.joinedAt<=l.date)){seen[s.id]=1;base.push(s)}
@@ -826,8 +835,8 @@ async function saveQuizDocToDir(file,quizName,dateStr){
 let db;
 function save(){localStorage.setItem(KEY,JSON.stringify(db));scheduleAutoSync()}
 function defaultKeywords(){return{good:['认真听讲','思路清晰','配合度高','计算较严谨','步骤规范','主动提问','状态有进步'],bad:['做题需细心','计算速度需提高','审题不够细致','步骤不够规范','检查意识需加强','复习需加强']}}
-function migrate(d){d=d||{};d.classes=d.classes||[];d.students=d.students||[];d.lessons=d.lessons||[];d.templates=d.templates||[];d.feedbacks=d.feedbacks||[];d.todos=d.todos||[];d.phrases=d.phrases||[];d.courses=d.courses||[];d.courses.forEach(function(c){if(!c.classIds)c.classIds=c.classId?[c.classId]:[]});d.quizzes=d.quizzes||[];d.settings=d.settings||{};d.settings.apiKey=d.settings.apiKey||'';d.settings.model=d.settings.model||'';if(!d.settings.model||d.settings.model==='deepseek-chat'||d.settings.model==='deepseek-reasoner')d.settings.model='deepseek-flash';d.settings.quizDirName=d.settings.quizDirName||'';d.settings.modelOptions=d.settings.modelOptions||[];d.settings.fbTone=d.settings.fbTone||'wx';d.settings.fbDetail=d.settings.fbDetail||'brief';d.settings.cloudUrl=d.settings.cloudUrl||'';d.settings.cloudKey=d.settings.cloudKey||'';d.settings.cloudId=d.settings.cloudId||'';d.settings.lastSyncAt=d.settings.lastSyncAt||0;d.settings.lastSyncDir=d.settings.lastSyncDir||'';if(d.settings.cloudAuto===undefined)d.settings.cloudAuto=true;d.settings.lastCloudSeen=d.settings.lastCloudSeen||0;if(!d.relations||!d.relations.length)d.relations=['爸爸','妈妈'];d.keywords=d.keywords||{};if(!d.keywords.good)d.keywords.good=defaultKeywords().good;if(!d.keywords.bad)d.keywords.bad=defaultKeywords().bad;return d}
-function emptyDb(){return{isDemo:false,classes:[],students:[],lessons:[],templates:[],feedbacks:[],todos:[],phrases:[],courses:[],quizzes:[],relations:['爸爸','妈妈'],settings:{apiKey:'',model:'deepseek-flash',quizDirName:'',modelOptions:[],fbTone:'wx',fbDetail:'brief',cloudUrl:'',cloudKey:'',cloudId:'',lastSyncAt:0,lastSyncDir:'',cloudAuto:true,lastCloudSeen:0},keywords:defaultKeywords()}}
+function migrate(d){d=d||{};d.classes=d.classes||[];d.students=d.students||[];d.lessons=d.lessons||[];d.templates=d.templates||[];d.feedbacks=d.feedbacks||[];d.todos=d.todos||[];d.phrases=d.phrases||[];d.courses=d.courses||[];d.courses.forEach(function(c){if(!c.classIds)c.classIds=c.classId?[c.classId]:[]});d.quizzes=d.quizzes||[];d.settings=d.settings||{};d.settings.apiKey=d.settings.apiKey||'';d.settings.model=d.settings.model||'';if(!d.settings.model||d.settings.model==='deepseek-chat'||d.settings.model==='deepseek-reasoner')d.settings.model='deepseek-flash';d.settings.quizDirName=d.settings.quizDirName||'';d.settings.modelOptions=d.settings.modelOptions||[];d.settings.fbTone=d.settings.fbTone||'wx';d.settings.fbDetail=d.settings.fbDetail||'brief';d.settings.cloudUrl=d.settings.cloudUrl||'';d.settings.cloudKey=d.settings.cloudKey||'';d.settings.cloudId=d.settings.cloudId||'';d.settings.lastSyncAt=d.settings.lastSyncAt||0;d.settings.lastSyncDir=d.settings.lastSyncDir||'';if(d.settings.cloudAuto===undefined)d.settings.cloudAuto=true;d.settings.lastCloudSeen=d.settings.lastCloudSeen||0;d.campuses=d.campuses||[];if(!d.relations||!d.relations.length)d.relations=['爸爸','妈妈'];d.keywords=d.keywords||{};if(!d.keywords.good)d.keywords.good=defaultKeywords().good;if(!d.keywords.bad)d.keywords.bad=defaultKeywords().bad;return d}
+function emptyDb(){return{isDemo:false,classes:[],students:[],lessons:[],templates:[],feedbacks:[],todos:[],phrases:[],courses:[],quizzes:[],relations:['爸爸','妈妈'],campuses:[],settings:{apiKey:'',model:'deepseek-flash',quizDirName:'',modelOptions:[],fbTone:'wx',fbDetail:'brief',cloudUrl:'',cloudKey:'',cloudId:'',lastSyncAt:0,lastSyncDir:'',cloudAuto:true,lastCloudSeen:0},keywords:defaultKeywords()}}
 function load(){
   try{const s=localStorage.getItem(KEY);if(s)return migrate(JSON.parse(s))}catch(e){}
   return seed();
@@ -836,9 +845,9 @@ function seed(){
   const ws=mondayOf(new Date());
   const D=n=>fmtDate(addDays(ws,n));
   const classes=[
-    {id:'c1',grade:'初二',name:'1班'},{id:'c2',grade:'初二',name:'2班'},
-    {id:'c3',grade:'初三',name:'1班'},{id:'c4',grade:'高一',name:'1班'},
-    {id:'c5',grade:'高二',name:'1班'},{id:'c6',grade:'高三',name:'1班'}
+    {id:'c1',grade:'初二',name:'1班',campusId:'cp1'},{id:'c2',grade:'初二',name:'2班',campusId:'cp1'},
+    {id:'c3',grade:'初三',name:'1班',campusId:'cp1'},{id:'c4',grade:'高一',name:'1班',campusId:'cp2'},
+    {id:'c5',grade:'高二',name:'1班',campusId:'cp2'},{id:'c6',grade:'高三',name:'1班',campusId:'cp2'}
   ];
   const S=(name,grade,classId,school,relation,phone,notes)=>({id:uid(),name,grade,classId,school:school||'',relation:relation||'',phone,notes:notes||'',status:'active',cohort:gradYearOf(grade),createdAt:Date.now()});
   const students=[
@@ -907,7 +916,7 @@ function seed(){
     {id:uid(),text:'准备高一「连接体问题」专题讲义',due:null,done:false,createdAt:Date.now()}
   ];
   const phrases=['课堂专注度高，参与积极','概念理解到位，解题规范','计算准确率有待提高，需多练基础题','能主动提问，思维活跃','审题需更细心，注意单位换算','较上次有明显进步，继续保持'];
-  return{isDemo:true,classes,students,lessons,templates,feedbacks,todos,phrases,courses,quizzes:[],relations:['爸爸','妈妈'],settings:{apiKey:'',model:'deepseek-flash',quizDirName:'',modelOptions:[],fbTone:'wx',fbDetail:'brief',cloudUrl:'',cloudKey:'',cloudId:'',lastSyncAt:0,lastSyncDir:'',cloudAuto:true,lastCloudSeen:0},keywords:defaultKeywords()};
+  return{isDemo:true,classes,students,lessons,templates,feedbacks,todos,phrases,courses,quizzes:[],relations:['爸爸','妈妈'],campuses:[{id:'cp1',name:'城东校区'},{id:'cp2',name:'城西校区'}],settings:{apiKey:'',model:'deepseek-flash',quizDirName:'',modelOptions:[],fbTone:'wx',fbDetail:'brief',cloudUrl:'',cloudKey:'',cloudId:'',lastSyncAt:0,lastSyncDir:'',cloudAuto:true,lastCloudSeen:0},keywords:defaultKeywords()};
 }
 
 /* ================= 通用 UI ================= */
@@ -1308,7 +1317,7 @@ function applyBulkEdit(){
   if($('#be-on-cohort').checked){const v=$('#be-cohort').value.trim();chg.cohort=v?+v:null;n++}
   if($('#be-on-status').checked){chg.status=$('#be-status').value;n++}
   if(!n){toast('请先勾选至少一个要修改的字段');return}
-  ids.forEach(id=>{const s=db.students.find(x=>x.id===id);if(s)Object.assign(s,chg)});
+  ids.forEach(id=>{const s=db.students.find(x=>x.id===id);if(s){Object.assign(s,chg);if(s.status==='paused'&&!s.pausedFrom)s.pausedFrom=todayStr()}});
   save();ui.stu.sel={};closeModal();renderPage();
   toast('已批量更新 '+ids.length+' 名学员');
 }
@@ -1338,6 +1347,7 @@ function saveMultiEdit(){
     s.relation=(relV&&relV!=='__new__')?relV:'';
     s.phone=row.querySelector('.bk-phone').value.trim();
     s.status=row.querySelector('.bk-st').value;
+    if(s.status==='paused'&&!s.pausedFrom)s.pausedFrom=todayStr();
     s.notes=row.querySelector('.bk-notes').value.trim();
   });
   if(empty){toast('有学员姓名为空，请补全后再保存');return}
@@ -1410,6 +1420,7 @@ function saveStudent(e,id,isTrialForm){
     o.classId=f.classId.value||null;
     o.status=f.status.value;
   }
+  if(o.status==='paused'&&!(id&&cur&&cur.pausedFrom))o.pausedFrom=todayStr();
   if(id){Object.assign(db.students.find(x=>x.id===id),o);toast('已保存修改')}
   else{db.students.push(Object.assign({id:uid(),createdAt:Date.now()},o));toast(trialMode?'已加入试听学员':'已添加学员')}
   save();closeModal();renderPage();return false;
@@ -1448,9 +1459,33 @@ function trialFail(id){
 }
 function toggleStudentStatus(id){
   const s=db.students.find(x=>x.id===id);
+  if(!s)return;
   if(s.status==='graduated'){toast('该学员已毕业，如需恢复请编辑学员改状态');return}
-  s.status=s.status==='active'?'paused':'active';
-  save();renderPage();toast(s.status==='active'?'已恢复上课':'已标记停课');
+  if(s.status==='paused'){
+    s.status='active';
+    save();renderPage();
+    toast(s.name+' 已复课，之后的课重新出现在考勤名册');
+  }else{
+    openPauseDialog(id);
+  }
+}
+function openPauseDialog(id){
+  const s=db.students.find(x=>x.id===id);
+  if(!s)return;
+  showModal('停课 · '+esc(s.name),
+    '<div class="form">'
+    +'<div class="fi"><label>停课起始日期（从这天起（含当天）的课，考勤名册不再出现他）</label><input type="date" id="pause-from" value="'+todayStr()+'"></div>'
+    +'<p class="sub">之后随时可在学员列表点「复课」恢复；历史考勤记录不受影响。</p>'
+    +'<div class="m-actions"><button type="button" class="btn" onclick="closeModal()">取消</button><button type="button" class="btn btn-primary" onclick="confirmPause(\''+id+'\')">确认停课</button></div>'
+    +'</div>');
+}
+function confirmPause(id){
+  const s=db.students.find(x=>x.id===id);
+  if(!s)return;
+  const d1=$('#pause-from').value||todayStr();
+  s.status='paused';s.pausedFrom=d1;
+  save();closeModal();renderPage();
+  toast(s.name+' 已停课（自 '+dateCN(d1)+' 起）');
 }
 function delStudent(id){
   const s=db.students.find(x=>x.id===id);
@@ -1458,27 +1493,65 @@ function delStudent(id){
   db.students=db.students.filter(x=>x.id!==id);
   save();renderPage();toast('已删除');
 }
+function campusOptionsHTML(selected){
+  return '<option value="">未分配校区</option>'+db.campuses.map(cp=>'<option value="'+cp.id+'"'+(cp.id===selected?' selected':'')+'>'+esc(cp.name)+'</option>').join('');
+}
+function addCampus(){
+  const el=document.getElementById('campus-name');
+  const v=el?el.value.trim():'';
+  if(!v){toast('请输入校区名称');return}
+  if(db.campuses.some(cp=>cp.name===v)){toast('同名校区已存在');return}
+  db.campuses.push({id:uid(),name:v});
+  save();openClassMgr();toast('已添加校区');
+}
+function delCampus(id){
+  const cp=db.campuses.find(x=>x.id===id);
+  if(!cp)return;
+  const n=db.classes.filter(c=>c.campusId===id).length;
+  if(!confirm('删除校区「'+cp.name+'」？'+(n?('其下 '+n+' 个班级将变为“未分配校区”。'):'')))return;
+  db.campuses=db.campuses.filter(x=>x.id!==id);
+  db.classes.forEach(function(c){if(c.campusId===id)c.campusId=''});
+  save();openClassMgr();toast('已删除校区');
+}
+function setClassCampus(id,campusId){
+  const c=db.classes.find(x=>x.id===id);
+  if(!c)return;
+  c.campusId=campusId||'';
+  save();toast('已更新校区');
+}
 function openClassMgr(){
   const rows=GRADES.map(g=>db.classes.filter(c=>c.grade===g).map(c=>{
     const n=db.students.filter(s=>s.classId===c.id).length;
-    return '<div class="cls-row"><span>'+esc(c.grade+c.name)+'</span><span class="sub">'+n+' 名学员</span><span class="grow"></span>'
+    return '<div class="cls-row"><span>'+esc(c.grade+c.name)+'</span><span class="sub">'+n+' 名学员</span>'
+      +'<select class="cls-campus" onchange="setClassCampus(\''+c.id+'\',this.value)" title="所属校区">'+campusOptionsHTML(c.campusId)+'</select><span class="grow"></span>'
       +'<button class="btn-sm btn" onclick="openCourseMgr(\''+c.id+'\')">排课</button> '
       +'<button class="btn-sm btn" onclick="promoteClass(\''+c.id+'\')">学年升级</button> '
       +'<button class="btn-sm btn" onclick="editClass(\''+c.id+'\')">改名</button>'
       +'<button class="btn-sm btn btn-danger" onclick="delClass(\''+c.id+'\')">删除</button></div>';
   }).join('')).join('');
-  showModal('班级管理',
-    '<p class="sub" style="margin-bottom:10px">先把各年段的班级建好，学员归入班级后，课表和反馈都会按班级组织。</p>'
+  const chips=db.campuses.map(cp=>{
+    const n=db.classes.filter(c=>c.campusId===cp.id).length;
+    return '<span class="badge b-blue" style="padding:4px 10px">'+esc(cp.name)+'（'+n+' 个班）<b style="cursor:pointer;margin-left:6px" onclick="delCampus(\''+cp.id+'\')">✕</b></span>';
+  }).join(' ');
+  showModal('班级管理与校区',
+    '<p class="sub" style="margin-bottom:10px">先建校区，再建班级并选所属校区；学员归入班级后，课表、反馈和计费统计都会按班级/校区组织。</p>'
+    +'<div class="frow" style="margin-bottom:8px">'
+    +'<div class="fi"><label>新增校区</label><input id="campus-name" placeholder="如：城东校区 / 总部"></div>'
+    +'<div class="fi" style="display:flex;align-items:flex-end"><button type="button" class="btn" onclick="addCampus()">＋ 添加校区</button></div>'
+    +'</div>'
+    +'<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+(chips||'<span class="sub">还没有校区（也可不建，统计时归入“未分配校区”）</span>')+'</div>'
     +'<form onsubmit="return saveClass(event)"><div class="frow">'
     +'<div class="fi"><label>年段</label><select name="grade">'+GRADES.map(g=>'<option>'+g+'</option>').join('')+'</select></div>'
     +'<div class="fi"><label>班级名称</label><input name="name" required placeholder="如：1班 / 物理A班"></div>'
-    +'</div><div class="m-actions" style="justify-content:flex-end"><button class="btn btn-primary">＋ 添加班级</button></div></form>'
+    +'</div>'
+    +'<div class="fi"><label>所属校区</label><select name="campus">'+campusOptionsHTML('')+'</select></div>'
+    +'<div class="m-actions" style="justify-content:flex-end"><button class="btn btn-primary">＋ 添加班级</button></div></form>'
     +'<div style="margin-top:12px">'+(rows||'<p class="sub">还没有班级，先在上面添加一个吧</p>')+'</div>');
 }
 function saveClass(e){
   e.preventDefault();
   const f=e.target.elements;
-  db.classes.push({id:uid(),grade:f.grade.value,name:f.name.value.trim()});
+  db.classes.push({id:uid(),grade:f.grade.value,name:f.name.value.trim(),campusId:f.campus?f.campus.value:''});
   save();toast('已添加班级');openClassMgr();return false;
 }
 function editClass(id){
@@ -1487,13 +1560,15 @@ function editClass(id){
     '<form onsubmit="return saveClassEdit(event,\''+id+'\')"><div class="frow">'
     +'<div class="fi"><label>年段</label><select name="grade">'+GRADES.map(g=>'<option'+(g===c.grade?' selected':'')+'>'+g+'</option>').join('')+'</select></div>'
     +'<div class="fi"><label>班级名称</label><input name="name" required value="'+esc(c.name)+'"></div>'
-    +'</div><div class="m-actions"><button type="button" class="btn" onclick="openClassMgr()">返回</button><button class="btn btn-primary">保存</button></div></form>');
+    +'</div>'
+    +'<div class="fi"><label>所属校区</label><select name="campus">'+campusOptionsHTML(c.campusId)+'</select></div>'
+    +'<div class="m-actions"><button type="button" class="btn" onclick="openClassMgr()">返回</button><button class="btn btn-primary">保存</button></div></form>');
 }
 function saveClassEdit(e,id){
   e.preventDefault();
   const f=e.target.elements;
   const c=db.classes.find(x=>x.id===id);
-  c.grade=f.grade.value;c.name=f.name.value.trim();
+  c.grade=f.grade.value;c.name=f.name.value.trim();c.campusId=f.campus?f.campus.value:'';
   save();toast('已修改');openClassMgr();return false;
 }
 function delClass(id){
@@ -1511,7 +1586,7 @@ function stuBadge(s){
   if(s.status==='trial')return '<span class="badge b-blue">试听中</span>';
   if(s.status==='trialed')return '<span class="badge b-gray">试听未报名</span>';
   if(s.status==='graduated')return '<span class="badge" style="background:#eff6ff;color:#1d4ed8">毕业</span>';
-  return '<span class="badge b-gray">停课</span>';
+  return '<span class="badge b-gray"'+(s.status==='paused'&&s.pausedFrom?' title="自 '+s.pausedFrom+' 起停课"':'')+'>停课</span>';
 }
 function promoteStudent(id){
   const s=db.students.find(x=>x.id===id);
@@ -1600,6 +1675,7 @@ function openArchive(id){
     +'<div class="sub" style="margin-top:4px">'+esc(s.grade)+(s.cohort?('（'+s.cohort+'届）'):'')+' · '+esc(clsNameById(s.classId))+(s.school?' · '+esc(s.school):'')+(s.relation?' · 家长关系：'+esc(s.relation):'')
     +(s.phone?' · <a href="tel:'+esc(s.phone)+'">'+esc(s.phone)+'</a>':'')+(s.joinedAt?' · 加入于 '+dateCN(s.joinedAt):'')+'</div>'
     +(s.trial?'<div class="sub" style="margin-top:2px">👂 试听记录：'+(function(){const tc=db.courses.find(x=>x.id===s.trial.courseId);return (tc?esc(tc.name+' · '+courseClassNames(tc)):'—')+(s.joinedAt?'（'+dateCN(s.joinedAt)+' 起）':'')+' · '+(s.status==='trial'?'试听中':(s.trial.result==='enrolled'?'已报名':'未报名'))})()+'</div>':'')
+    +(s.status==='paused'&&s.pausedFrom?'<div class="sub" style="margin-top:2px">⏸ 自 '+dateCN(s.pausedFrom)+' 起停课</div>':'')
     +(s.notes?'<div class="sub" style="margin-top:2px">备注：'+esc(s.notes)+'</div>':'')
     +'<div class="arc-sec"><h4>考勤记录 <span class="sub">（√与视均为计费课时，假不计费）</span></h4>'
     +((present||videoN||leaveN)?'<div style="margin-bottom:6px"><span class="badge b-green" style="margin-right:6px">√ 出勤 '+present+'</span><span class="badge" style="background:#eff6ff;color:#1d4ed8;margin-right:6px">视 录课 '+videoN+'</span><span class="badge b-red">假 请假 '+leaveN+'</span></div>':'')
@@ -1726,7 +1802,40 @@ function billStatsHTML(from,to,label){
     +'<span class="sub">（✓出勤 + 视录课计入，假/试听不计费）</span>'
     +'<span class="sub">· 已上课 '+done+' 节</span>'
     +(noAtt?('<span class="sub" style="color:var(--amber)">· 含 '+noAtt+' 节未记考勤，记完后数字更准</span>'):'')
+    +'<button class="btn-sm btn" style="margin-left:auto" onclick="openBillDetail(\''+from+'\',\''+to+'\',\''+label+'\')">📊 分校区明细</button>'
     +'</div>';
+}
+function openBillDetail(from,to,label){
+  const segOf=function(g){return (g==='初二'||g==='初三')?'初中':((g==='高一'||g==='高二'||g==='高三')?'高中':'其他')};
+  const map={};let total=0;
+  db.lessons.filter(l=>l.date>=from&&l.date<=to&&l.status!=='cancelled').forEach(function(l){
+    const a=l.attendance||{};
+    Object.keys(a).forEach(function(sid){
+      if(a[sid]!=='present'&&a[sid]!=='video')return;
+      const st=db.students.find(x=>x.id===sid);
+      const cls=st&&st.classId?db.classes.find(c=>c.id===st.classId):null;
+      const cid=(cls&&cls.campusId)||'';
+      const seg=st?segOf(st.grade):'其他';
+      const k=cid+'|'+seg;
+      map[k]=(map[k]||0)+1;total++;
+    });
+  });
+  if(!total){showModal('计费明细 · '+label,'<p class="sub">这个范围内还没有计费记录（✓出勤/视录课）。</p><div class="m-actions"><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>');return}
+  let rowsHTML='',tls=0,ths=0;
+  db.campuses.forEach(function(cp){
+    const l=map[cp.id+'|初中']||0,h=map[cp.id+'|高中']||0,o=map[cp.id+'|其他']||0;
+    tls+=l;ths+=h;
+    rowsHTML+='<div class="bill-row"><span>'+esc(cp.name)+'</span><span>'+l+' 人次</span><span>'+h+' 人次</span><span><b>'+(l+h+o)+'</b></span></div>';
+  });
+  const ul=map['|初中']||0,uh=map['|高中']||0,uo=map['|其他']||0;
+  if(ul||uh||uo){tls+=ul;ths+=uh;rowsHTML+='<div class="bill-row"><span class="sub">未分配校区</span><span>'+ul+' 人次</span><span>'+uh+' 人次</span><span><b>'+(ul+uh+uo)+'</b></span></div>'}
+  showModal('计费明细 · '+label+'（'+dateCN(from)+'–'+dateCN(to)+'）',
+    '<p class="sub" style="margin-bottom:8px">按「校区 × 学段」拆分计费人次（✓出勤 + 视录课计入；学员按其所在班级归入校区）。</p>'
+    +'<div class="billtable"><div class="bill-row bill-head"><span>校区</span><span>初中</span><span>高中</span><span>合计</span></div>'
+    +rowsHTML
+    +'<div class="bill-row bill-foot"><span>总计</span><span>'+tls+' 人次</span><span>'+ths+' 人次</span><span><b>'+total+'</b></span></div>'
+    +'</div>'
+    +'<div class="m-actions"><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>');
 }
 function statsPanelHTML(){
   const t=todayStr();
@@ -2125,9 +2234,17 @@ function renderAttRows(){
   const merged=Object.assign({},l.attendance||{},collectAtt());
   const knownIds={};roster.forEach(s=>{knownIds[s.id]=1});
   const hist=Object.keys(l.attendance||{}).filter(id=>!knownIds[id]&&!attExtra.some(e=>e.id===id)).map(id=>{const st=db.students.find(x=>x.id===id);return st?{id:st.id,name:st.name+'（临时）',status:'active'}:null}).filter(Boolean);
+  const mkFrom={};
+  db.lessons.forEach(function(x){if(x.makeup){Object.keys(x.makeup).forEach(function(sid){if(x.makeup[sid]===l.id)mkFrom[sid]=x;})}});
   const rows=roster.concat(attExtra.map(e=>({id:e.id,name:e.name+'（临时）',status:'active',tmp:1})),hist);
   $('#att-rows').innerHTML=rows.map(s=>{
     const cur=merged[s.id]||'';
+    const mkSrc=mkFrom[s.id];
+    if(mkSrc){
+      return '<div class="att-row"><span class="att-name">'+esc(s.name)
+        +'<span class="badge b-green" title="已在 '+dateCN(mkSrc.date)+' '+esc(clsNameById(mkSrc.classId))+' 补课；如需修改，到那节课的考勤里调整">已补课</span>'
+        +'</span><span class="att-btns"></span></div>';
+    }
     const isTrial=s.status==='trial'&&s.trial&&c&&s.trial.courseId===c.id;
     const enrolledTrial=!!(s.trial&&s.trial.result==='enrolled'&&c&&s.trial.courseId===c.id);
     let trialBound='';
