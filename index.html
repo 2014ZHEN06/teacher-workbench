@@ -286,6 +286,20 @@ main{max-width:1280px;margin:0 auto;padding:20px 16px 70px}
 .bill-head{background:var(--gray-bg);font-weight:600;font-size:12px;color:var(--muted)}
 .bill-foot{border-top:2px solid var(--border);font-weight:600}
 .cls-campus{max-width:130px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff;color:var(--muted)}
+/* ---------- 出勤总表 ---------- */
+.at-block{margin-bottom:14px}
+.at-wrap{overflow-x:auto}
+.at-table{border-collapse:collapse;font-size:12px;white-space:nowrap}
+.at-table th,.at-table td{border:1px solid var(--border);padding:4px 6px;text-align:center;min-width:36px}
+.at-table th{background:var(--gray-bg);font-weight:600;font-size:11px;color:var(--muted)}
+.at-d{text-align:left !important;font-size:12px}
+.at-p{color:var(--green);font-weight:700;background:var(--green-bg)}
+.at-v{color:#1d4ed8;font-weight:700;background:#eff6ff}
+.at-l{color:var(--red);font-weight:700;background:var(--red-bg)}
+.at-t{color:#059669;font-weight:700;background:#ecfdf5}
+.at-mk{color:var(--green);font-weight:700;background:var(--green-bg)}
+.at-x{color:#cbd5e1}
+.at-sum{background:var(--gray-bg);font-weight:600}
 </style>
 </head>
 <body>
@@ -1626,6 +1640,36 @@ function promoteClass(id){
 }
 
 /* 学员个人档案 */
+function openAttQuick(sid,lid){
+  const l=db.lessons.find(x=>x.id===lid);
+  const s=db.students.find(x=>x.id===sid);
+  if(!l||!s)return;
+  const st=(l.attendance||{})[sid];
+  const stName={present:'√ 出勤',video:'视 录课',leave:'假 请假',absent:'假 请假',trial:'试 试听'}[st]||'（无记录）';
+  let mkTip='';
+  db.lessons.forEach(function(x){if(x.makeup&&x.makeup[sid]===lid)mkTip='<p class="sub">这节课有补课记录：'+dateCN(x.date)+' 在 '+esc(clsNameById(x.classId))+' 补上（清除本处记录不会删除补课关联）。</p>'});
+  showModal('修改考勤 · '+esc(s.name),
+    '<p class="sub" style="margin-bottom:8px">'+dateCN(l.date)+'（周'+WD_CN[parseDate(l.date).getDay()]+'）'+l.start+'–'+l.end+' · '+esc(clsNameById(l.classId))+' · 当前：'+stName+'</p>'
+    +mkTip
+    +'<div class="toolbar" style="flex-wrap:wrap">'
+    +'<button class="btn" onclick="setAttQuick(\''+sid+'\',\''+lid+'\',\'present\')">√ 出勤</button>'
+    +'<button class="btn" onclick="setAttQuick(\''+sid+'\',\''+lid+'\',\'video\')">视 录课</button>'
+    +'<button class="btn" onclick="setAttQuick(\''+sid+'\',\''+lid+'\',\'leave\')">假 请假</button>'
+    +'<button class="btn" onclick="setAttQuick(\''+sid+'\',\''+lid+'\',\'trial\')">试 试听（不计费）</button>'
+    +'<button class="btn btn-danger" onclick="setAttQuick(\''+sid+'\',\''+lid+'\',\'\')">清除记录</button>'
+    +'</div>'
+    +'<div class="m-actions"><button class="btn btn-primary" onclick="openArchive(\''+sid+'\')">返回档案</button></div>');
+}
+function setAttQuick(sid,lid,val){
+  const l=db.lessons.find(x=>x.id===lid);
+  if(!l)return;
+  l.attendance=l.attendance||{};
+  if(val)l.attendance[sid]=val;else delete l.attendance[sid];
+  if(!Object.keys(l.attendance).length)delete l.attendance;
+  save();
+  toast(val?('已标记：'+({present:'出勤',video:'录课',leave:'请假',trial:'试听（不计费）'}[val]||val)):'已清除该课记录');
+  openArchive(sid);
+}
 function openArchive(id){
   const s=db.students.find(x=>x.id===id);
   let present=0,videoN=0,leaveN=0;
@@ -1653,13 +1697,14 @@ function openArchive(id){
       const st=(l.attendance||{})[s.id];
       const ti=dateCN(l.date)+' '+l.start;
       const mkr=mkByY[l.id];
-      if(mkr&&(st===undefined||st==='leave'||st==='absent')){p++;return '<span class="att-cell att-c-makeup" title="'+ti+' 补课：'+dateCN(mkr.x.date)+' 在 '+esc(clsNameById(mkr.x.classId))+' 补上">补</span>'}
-      if(st==='present'){p++;return '<span class="att-cell att-c-present" title="'+ti+' 出勤">√</span>'}
-      if(st==='video'){v++;return '<span class="att-cell att-c-video" title="'+ti+' 补视频录课">视</span>'}
-      if(st==='leave'||st==='absent'){lv++;return '<span class="att-cell att-c-leave" title="'+ti+' 请假">假</span>'}
-      if(st==='trial'){tr++;return '<span class="att-cell att-c-trial" title="'+ti+' 试听（不计费）">试</span>'}
-      if(lessonDone(l))return '<span class="att-cell att-c-none" title="'+ti+' 未记录考勤">'+(g.inClass?'？':'·')+'</span>';
-      return '<span class="att-cell att-c-future" title="'+ti+' 未上课">·</span>';
+      let cls='att-c-future',txt='·',ttl=ti+' 未上课；';
+      if(mkr&&(st===undefined||st==='leave'||st==='absent')){p++;cls='att-c-makeup';txt='补';ttl=ti+' 补课：'+dateCN(mkr.x.date)+' 在 '+clsNameById(mkr.x.classId)+' 补上；'}
+      else if(st==='present'){p++;cls='att-c-present';txt='√';ttl=ti+' 出勤；'}
+      else if(st==='video'){v++;cls='att-c-video';txt='视';ttl=ti+' 补视频录课；'}
+      else if(st==='leave'||st==='absent'){lv++;cls='att-c-leave';txt='假';ttl=ti+' 请假；'}
+      else if(st==='trial'){tr++;cls='att-c-trial';txt='试';ttl=ti+' 试听（不计费）；'}
+      else if(lessonDone(l)){cls='att-c-none';txt=(g.inClass?'？':'·');ttl=ti+' 未记录考勤；'}
+      return '<span class="att-cell '+cls+'" style="cursor:pointer" title="'+ttl+'点击修改" onclick="openAttQuick(\''+s.id+'\',\''+l.id+'\')">'+txt+'</span>';
     }).join('');
     return '<div class="arc-g"><div class="arc-g-h">'+s0.icon+' '+esc(g.c.name)+(g.inClass?'':'<span class="badge b-blue">临时</span>')+'<span class="sub">出勤 '+p+' · 录课 '+v+' · 请假 '+lv+(tr?' · 试听 '+tr:'')+'</span></div><div>'+cells+'</div></div>';
   }).join('');
@@ -1708,6 +1753,7 @@ function scheduleHTML(){
     +'<button class="btn btn-primary" onclick="openLessonForm()">＋ 新增课次</button>'
     +'<button class="btn" onclick="openCourseMgr()">🗓 课程期排课</button>'
     +'<button class="btn" onclick="openLessonMover()">🔧 调课工具</button>'
+    +'<button class="btn" onclick="openAttTable()">📋 出勤总表</button>'
     +'<button class="btn" onclick="openShareModal()">📤 分享课表</button></div></div>'
     +(isMonth?monthGridHTML():weekGridHTML())
     +viewBillStats(isMonth)
@@ -2359,6 +2405,60 @@ function saveAttendance(id){
   save();closeModal();renderPage();toast('考勤已保存');
 }
 
+/* 出勤总表 */
+let attTableCur='';
+function openAttTable(){
+  const cs=db.courses.slice().sort((a,b)=>b.startDate.localeCompare(a.startDate));
+  if(!cs.length){toast('还没有课程期（先去「课程期排课」建一个）');return}
+  const cur=cs.find(c=>c.startDate<=todayStr()&&db.lessons.some(l=>l.courseId===c.id&&l.status!=='cancelled'&&l.date>=todayStr()));
+  const defId=cur?cur.id:cs[0].id;
+  showModal('出勤总表',
+    '<div class="toolbar" style="margin-bottom:10px"><span class="sub">课程期：</span><select id="att-tb-course" onchange="renderAttTable()">'
+    +cs.map(c=>'<option value="'+c.id+'"'+((c.id===defId)?' selected':'')+'>'+esc(c.name)+' · '+esc(courseClassNames(c))+'</option>').join('')
+    +'</select><span class="sub">（✓出勤 · 视 · 假 · 试 · 补；按班级分表，横向可滑）</span></div><div id="att-tb-area"></div>',
+    function(){renderAttTable()},{large:true});
+}
+function renderAttTable(){
+  const el=$('#att-tb-area');
+  if(!el)return;
+  const cid=$('#att-tb-course').value;
+  const c=db.courses.find(x=>x.id===cid);
+  if(!c){el.innerHTML='';return}
+  const ls=db.lessons.filter(l=>l.courseId===cid).sort((a,b)=>a.date.localeCompare(b.date)||a.start.localeCompare(b.start));
+  if(!ls.length){el.innerHTML='<p class="sub">该课程期还没有课次。</p>';return}
+  const mkByL={};
+  db.lessons.forEach(function(x){if(x.makeup){Object.keys(x.makeup).forEach(function(sid){const t=mkByL[x.makeup[sid]]=mkByL[x.makeup[sid]]||{};t[sid]=x;})}});
+  const classIds=c.classIds||[];
+  let html='';
+  classIds.forEach(function(clId){
+    const stu=[],seen={};
+    db.students.forEach(s=>{if(s.classId===clId){seen[s.id]=1;stu.push(s)}});
+    stu.sort((a,b)=>a.name.localeCompare(b.name,'zh'));
+    if(!stu.length)return;
+    const head='<tr><th class="at-h">课次</th>'+stu.map(s=>'<th title="'+esc(s.grade+' '+clsNameById(s.classId))+(s.status==='paused'?'（停课）':(s.status==='graduated'?'（已毕业）':''))+'">'+esc(s.name)+'</th>').join('')+'<th class="at-sum">计费</th></tr>';
+    const rows=ls.map(function(l){
+      const seq=courseSeq(l);
+      const a=l.attendance||{};
+      let bill=0;
+      const cells=stu.map(function(s){
+        const v=a[s.id];
+        const mk=mkByL[l.id]&&mkByL[l.id][s.id];
+        if(mk&&(v===undefined||v==='leave'||v==='absent'))return '<td class="at-mk" title="'+dateCN(mk.date)+' 在 '+esc(clsNameById(mk.classId))+' 补课">补</td>';
+        if(v==='present'){bill++;return '<td class="at-p">√</td>'}
+        if(v==='video'){bill++;return '<td class="at-v">视</td>'}
+        if(v==='leave'||v==='absent')return '<td class="at-l">假</td>';
+        if(v==='trial')return '<td class="at-t">试</td>';
+        if(l.status==='cancelled')return '<td class="at-x">—</td>';
+        return '<td>'+(lessonDone(l)?'<span class="at-x">·</span>':'')+'</td>';
+      }).join('');
+      return '<tr><td class="at-d">'+(seq?('第'+seq.no+'节 '):'')+dateCN(l.date)+'<span class="sub">'+WD_CN[dowOf(l.date)]+'</span></td>'+cells+'<td class="at-sum"><b>'+(bill||'')+'</b></td></tr>';
+    }).join('');
+    const cls=db.classes.find(x=>x.id===clId);
+    html+='<div class="at-block"><div class="arc-g-h">'+esc(cls?cls.grade+cls.name:'（班级）')+'<span class="sub">'+stu.length+' 名学生</span></div>'
+      +'<div class="at-wrap"><table class="at-table">'+head+rows+'</table></div></div>';
+  });
+  el.innerHTML=html||'<p class="sub">该课程期还没有班级或学员。</p>';
+}
 /* 课表分享 */
 let shareOffset=0;
 function openShareModal(){
