@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 物理教师工作台 · 单文件应用 · 2026-11-05 更新（小测解析 · 关班与课表 · 出勤总表筛选与行列转置） -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -292,6 +293,9 @@ main{max-width:1280px;margin:0 auto;padding:20px 16px 70px}
 .at-table{border-collapse:collapse;font-size:12px;white-space:nowrap}
 .at-table th,.at-table td{border:1px solid var(--border);padding:4px 6px;text-align:center;min-width:36px}
 .at-table th{background:var(--gray-bg);font-weight:600;font-size:11px;color:var(--muted)}
+.at-table .at-h,.at-table .at-d{position:sticky;left:0;z-index:2;background:#fff}
+.at-table .at-h{background:var(--gray-bg)}
+.at-table .at-grp{background:var(--gray-bg);text-align:left !important;font-weight:600;font-size:12px;color:var(--muted)}
 .at-d{text-align:left !important;font-size:12px}
 .at-p{color:var(--green);font-weight:700;background:var(--green-bg)}
 .at-v{color:#1d4ed8;font-weight:700;background:#eff6ff}
@@ -339,6 +343,43 @@ function gradYearOf(grade){
   const offset={'高三':0,'高二':1,'高一':2,'初三':3,'初二':4}[grade];
   return offset==null?null:base+offset;
 }
+/* 学年基准：9 月起算新学年，返回该学年高三的毕业年份 */
+function academicBaseYear(d){
+  d=d||new Date();
+  return d.getMonth()+1>=9?d.getFullYear()+1:d.getFullYear();
+}
+const COHORT_GRADES={0:'高三',1:'高二',2:'高一',3:'初三',4:'初二'};
+function gradeFromCohort(cohort){
+  return COHORT_GRADES[+cohort-academicBaseYear()]||'';
+}
+/* 学员列表的学段筛选：初中 / 高中 / 具体年段 */
+function gradeInScope(scope,grade){
+  if(!scope)return true;
+  if(scope==='初中')return grade==='初二'||grade==='初三';
+  if(scope==='高中')return grade==='高一'||grade==='高二'||grade==='高三';
+  return grade===scope;
+}
+function openClasses(){return db.classes.filter(function(c){return !c.closedAt})}
+function autoAdvancePausedStudents(){
+  let backfilled=0,moved=0,grad=0;
+  const base=academicBaseYear();
+  db.students.forEach(function(s){
+    if(!s.cohort&&s.status!=='graduated'){const gy=gradYearOf(s.grade);if(gy){s.cohort=gy;backfilled++}}
+    if(s.status!=='paused'||!s.cohort)return;
+    const i=GRADES.indexOf(s.grade);
+    if(i<0)return;
+    const g=gradeFromCohort(s.cohort);
+    const j=GRADES.indexOf(g);
+    if(g&&j>i){
+      if((s.grade==='初二'||s.grade==='初三')&&j>=2)s.school='';
+      s.grade=g;moved++;
+    }else if(!g&&+s.cohort<base&&s.grade==='高三'){
+      s.status='graduated';grad++;
+    }
+  });
+  if(backfilled||moved||grad)save();
+  return{backfilled:backfilled,moved:moved,grad:grad};
+}
 const SLOTS=[
   {id:'am1',label:'上午一',start:'08:00',end:'10:00'},
   {id:'am2',label:'上午二',start:'10:00',end:'12:00'},
@@ -377,6 +418,25 @@ function lessonBadge(l){
   return['',''];
 }
 function courseOf(l){return l&&l.courseId?db.courses.find(x=>x.id===l.courseId):null}
+/* 已关班的课程期不再显示进度条；合班中至少一个班未关班则保留 */
+function usesOpenClass(ids){
+  if(!ids||!ids.length)return true;
+  return ids.some(function(id){const c=db.classes.find(x=>x.id===id);return !c||!c.closedAt});
+}
+function lessonClassIds(l){
+  const c=courseOf(l);
+  return (c&&c.classIds&&c.classIds.length)?c.classIds:(l&&l.classId?[l.classId]:[]);
+}
+/* 课表隐藏：班级已关班，且这天在关班日期之后（含当天）的课，不再显示；已上/已录考勤的保留 */
+function hideClosedLesson(l){
+  if(l.attendance&&Object.keys(l.attendance).length)return false;
+  if(l.status!=='cancelled'&&lessonDone(l))return false;
+  const ids=lessonClassIds(l);
+  if(!ids.length)return false;
+  const ds=ids.map(function(id){const c=db.classes.find(x=>x.id===id);return c&&c.closedAt});
+  if(ds.some(function(d){return !d}))return false;
+  return ds.every(function(d){return l.date>=d});
+}
 function courseSeq(l){
   const c=courseOf(l);
   if(!c)return null;
@@ -557,9 +617,10 @@ async function extractDocxText(file){
   const pRe=/<w:p[\s>][\s\S]*?<\/w:p>/g;
   let m;
   while((m=pRe.exec(xml))){
-    const tRe=/<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
+    const pxml=m[0].replace(/<w:br[^>]*\/>/g,'<w:t>\n</w:t>').replace(/<w:cr[^>]*\/>/g,'<w:t>\n</w:t>').replace(/<w:tab[^>]*\/>/g,'<w:t> </w:t>');
+    const tRe=/<(?:w|m):t(?:\s[^>]*)?>([\s\S]*?)<\/(?:w|m):t>/g;
     let t,txts=[];
-    while((t=tRe.exec(m[0])))txts.push(t[1]);
+    while((t=tRe.exec(pxml)))txts.push(t[1]);
     if(!txts.length)continue;
     let line=txts.join('');
     line=line.replace(/&#x([0-9a-fA-F]+);/g,function(m,h){return String.fromCodePoint(parseInt(h,16))});
@@ -767,7 +828,7 @@ function rowsToStudents(rows){
         if(c)classId=c.id;
       }
     }
-    out.push({name:nm,grade:grade,classId:classId,school:ci.school>=0?String(row[ci.school]||'').trim():'',relation:ci.relation>=0?String(row[ci.relation]||'').trim():'',phone:ci.phone>=0?String(row[ci.phone]||'').trim():'',notes:ci.notes>=0?String(row[ci.notes]||'').trim():''});
+    out.push({name:nm,grade:grade,classId:classId,cohort:gradYearOf(grade),school:ci.school>=0?String(row[ci.school]||'').trim():'',relation:ci.relation>=0?String(row[ci.relation]||'').trim():'',phone:ci.phone>=0?String(row[ci.phone]||'').trim():'',notes:ci.notes>=0?String(row[ci.notes]||'').trim():''});
   }
   return{students:out,errors:errors};
 }
@@ -1228,7 +1289,7 @@ function studentsHTML(){
     if(edit)return '<div class="lrow editing" data-id="'+s.id+'">'
       +'<div class="cell" data-label="姓名"><input class="bk-name" value="'+esc(s.name)+'"></div>'
       +'<div class="cell" data-label="年段"><select class="bk-grade" onchange="bulkGradeChange(this)">'+GRADES.map(g=>'<option'+(g===s.grade?' selected':'')+'>'+g+'</option>').join('')+'</select></div>'
-      +'<div class="cell" data-label="班级"><select class="bk-cls"><option value="">未分班</option>'+db.classes.filter(c=>c.grade===s.grade).map(c=>'<option value="'+c.id+'"'+(c.id===s.classId?' selected':'')+'>'+esc(c.name)+'</option>').join('')+'</select></div>'
+      +'<div class="cell" data-label="班级"><select class="bk-cls"><option value="">未分班</option>'+db.classes.filter(c=>c.grade===s.grade&&(!c.closedAt||c.id===s.classId)).map(c=>'<option value="'+c.id+'"'+(c.id===s.classId?' selected':'')+'>'+esc(c.name)+(c.closedAt?'（已关班）':'')+'</option>').join('')+'</select></div>'
       +'<div class="cell" data-label="学校"><input class="bk-school" value="'+esc(s.school||'')+'"></div>'
       +'<div class="cell" data-label="届数"><input class="bk-cohort" type="number" min="2020" max="2045" value="'+(s.cohort||'')+'"></div>'
       +'<div class="cell" data-label="关系"><select class="bk-rel" onchange="onRelationSel(this)">'+relationOptionsHTML(s.relation||'')+'</select></div>'
@@ -1269,8 +1330,8 @@ function studentsHTML(){
     +'<select onchange="ui.stu.grade=this.value;ui.stu.classId=\'\';ui.stu.sel={};renderPage()"><option value="">全部年段</option>'
     +'<optgroup label="按学段"><option value="初中"'+(f.grade==='初中'?' selected':'')+'>初中（初二/初三）</option><option value="高中"'+(f.grade==='高中'?' selected':'')+'>高中（高一~高三）</option></optgroup>'
     +'<optgroup label="按年段">'+GRADES.map(g=>'<option'+(f.grade===g?' selected':'')+'>'+g+'</option>').join('')+'</optgroup></select>'
-    +'<select onchange="ui.stu.classId=this.value;ui.stu.sel={};renderPage()"><option value="">全部班级</option>'
-    +db.classes.map(c=>'<option value="'+c.id+'"'+(f.classId===c.id?' selected':'')+'>'+esc(c.grade+c.name)+'</option>').join('')+'</select>'
+    +'<select onchange="ui.stu.classId=this.value;ui.stu.sel={};renderPage()"><option value="">'+(f.grade==='初中'||f.grade==='高中'?'该学段全部班级':(f.grade?'该年段全部班级':'全部班级'))+'</option>'
+    +db.classes.filter(c=>gradeInScope(f.grade,c.grade)).map(c=>'<option value="'+c.id+'"'+(f.classId===c.id?' selected':'')+'>'+esc(c.grade+c.name)+(c.closedAt?'（已关班）':'')+'</option>').join('')+'</select>'
     +'<select onchange="ui.stu.status=this.value;ui.stu.sel={};renderPage()">'
     +'<option value="active"'+(f.status==='active'?' selected':'')+'>在读（含试听）</option>'
     +'<option value="trial"'+(f.status==='trial'?' selected':'')+'>试听中</option>'
@@ -1289,7 +1350,7 @@ function studentsHTML(){
     +'<p class="sub" style="margin-top:10px">共 '+list.length+' 名学员</p>';
 }
 function classOptionsHTML(grade,selected){
-  return db.classes.filter(c=>c.grade===grade).map(c=>'<option value="'+c.id+'"'+(c.id===selected?' selected':'')+'>'+esc(c.grade+c.name)+'</option>').join('');
+  return db.classes.filter(c=>c.grade===grade&&(!c.closedAt||c.id===selected)).map(c=>'<option value="'+c.id+'"'+(c.id===selected?' selected':'')+'>'+esc(c.grade+c.name)+(c.closedAt?'（已关班）':'')+'</option>').join('');
 }
 function relationOptionsHTML(sel){
   return '<option value="">（未填）</option>'+db.relations.map(r=>'<option'+(r===sel?' selected':'')+'>'+esc(r)+'</option>').join('')+'<option value="__new__">＋ 新建关系…</option>';
@@ -1317,7 +1378,7 @@ function openBulkEdit(){
   if(!ids.length){toast('请先勾选学员');return}
   showModal('批量编辑（已选 '+ids.length+' 人）',
     '<p class="sub" style="margin-bottom:10px">只修改勾选了左侧方框的字段，其余字段保持不变。</p><div class="form">'
-    +'<div class="fi"><label class="ck-lb"><input type="checkbox" id="be-on-cls" onchange="document.getElementById(\'be-cls\').disabled=!this.checked"> 班级</label><select id="be-cls" disabled><option value="">不设班级</option>'+db.classes.map(c=>'<option value="'+c.id+'">'+esc(c.grade+c.name)+'</option>').join('')+'</select></div>'
+    +'<div class="fi"><label class="ck-lb"><input type="checkbox" id="be-on-cls" onchange="document.getElementById(\'be-cls\').disabled=!this.checked"> 班级</label><select id="be-cls" disabled><option value="">不设班级</option>'+openClasses().map(c=>'<option value="'+c.id+'">'+esc(c.grade+c.name)+'</option>').join('')+'</select></div>'
     +'<div class="fi"><label class="ck-lb"><input type="checkbox" id="be-on-school" onchange="document.getElementById(\'be-school\').disabled=!this.checked"> 学校</label><input id="be-school" disabled placeholder="留空则清空学校"></div>'
     +'<div class="fi"><label class="ck-lb"><input type="checkbox" id="be-on-cohort" onchange="document.getElementById(\'be-cohort\').disabled=!this.checked"> 届数</label><input id="be-cohort" type="number" min="2020" max="2045" disabled placeholder="如 2029"></div>'
     +'<div class="fi"><label class="ck-lb"><input type="checkbox" id="be-on-status" onchange="document.getElementById(\'be-status\').disabled=!this.checked"> 状态</label><select id="be-status" disabled><option value="active">在读</option><option value="trial">试听中</option><option value="trialed">试听未报名</option><option value="paused">停课</option><option value="graduated">毕业</option></select></div>'
@@ -1339,7 +1400,7 @@ function bulkGradeChange(gsel){
   const row=gsel.closest('.lrow');
   const cs=row.querySelector('.bk-cls');
   const cur=cs.value;
-  cs.innerHTML='<option value="">未分班</option>'+db.classes.filter(c=>c.grade===gsel.value).map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('');
+  cs.innerHTML='<option value="">未分班</option>'+db.classes.filter(c=>c.grade===gsel.value&&!c.closedAt).map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('');
   if(cur&&db.classes.some(c=>c.id===cur&&c.grade===gsel.value))cs.value=cur;
 }
 function startMultiEdit(){ui.stu.editMode=true;ui.stu.sel={};renderPage()}
@@ -1447,7 +1508,7 @@ function openTrialResult(id){
   showModal('试听结果 · '+esc(s.name),
     '<p class="sub" style="margin-bottom:8px">试听：'+(c?esc(c.name+' · '+courseClassNames(c)):'（未记录课程期）')+(s.joinedAt?' · '+dateCN(s.joinedAt)+' 起':'')+'</p>'
     +'<div class="form">'
-    +'<div class="fi"><label>报名班级（成功报名时归入）</label><select id="tr-cls"><option value="">未选</option>'+db.classes.map(c2=>'<option value="'+c2.id+'"'+(c2.id===defCls?' selected':'')+'>'+esc(c2.grade+c2.name)+'</option>').join('')+'</select></div>'
+    +'<div class="fi"><label>报名班级（成功报名时归入）</label><select id="tr-cls"><option value="">未选</option>'+openClasses().map(c2=>'<option value="'+c2.id+'"'+(c2.id===defCls?' selected':'')+'>'+esc(c2.grade+c2.name)+'</option>').join('')+'</select></div>'
     +'<p class="sub">✅ 成功报名：加入所选班级，试听课保持「试」不计费，从下一节课起正常计费。<br>✖ 未报名：此后课次不再出现他，档案保留试听记录。</p>'
     +'<div class="m-actions"><button type="button" class="btn btn-danger" onclick="trialFail(\''+id+'\')">✖ 未报名</button><span style="flex:1"></span><button type="button" class="btn" onclick="closeModal()">取消</button><button type="button" class="btn btn-primary" onclick="trialEnroll(\''+id+'\')">✅ 成功报名</button></div>'
     +'</div>');
@@ -1477,8 +1538,9 @@ function toggleStudentStatus(id){
   if(s.status==='graduated'){toast('该学员已毕业，如需恢复请编辑学员改状态');return}
   if(s.status==='paused'){
     s.status='active';
+    const c=db.classes.find(x=>x.id===s.classId);
     save();renderPage();
-    toast(s.name+' 已复课，之后的课重新出现在考勤名册');
+    toast(s.name+' 已复课'+(c&&c.closedAt?'（注意：所在班级已关班）':'，之后的课重新出现在考勤名册'));
   }else{
     openPauseDialog(id);
   }
@@ -1536,11 +1598,14 @@ function setClassCampus(id,campusId){
 function openClassMgr(){
   const rows=GRADES.map(g=>db.classes.filter(c=>c.grade===g).map(c=>{
     const n=db.students.filter(s=>s.classId===c.id).length;
-    return '<div class="cls-row"><span>'+esc(c.grade+c.name)+'</span><span class="sub">'+n+' 名学员</span>'
+    const pausedN=db.students.filter(s=>s.classId===c.id&&s.status==='paused').length;
+    return '<div class="cls-row"><span>'+esc(c.grade+c.name)+(c.closedAt?' <span class="badge b-gray">已关班 '+esc(c.closedAt)+'</span>':'')+'</span>'
+      +'<span class="sub">'+n+' 名学员'+(pausedN?('（停课 '+pausedN+'）'):'')+'</span>'
       +'<select class="cls-campus" onchange="setClassCampus(\''+c.id+'\',this.value)" title="所属校区">'+campusOptionsHTML(c.campusId)+'</select><span class="grow"></span>'
       +'<button class="btn-sm btn" onclick="openCourseMgr(\''+c.id+'\')">排课</button> '
       +'<button class="btn-sm btn" onclick="promoteClass(\''+c.id+'\')">学年升级</button> '
       +'<button class="btn-sm btn" onclick="editClass(\''+c.id+'\')">改名</button>'
+      +(c.closedAt?'<button class="btn-sm btn" onclick="reopenClassDialog(\''+c.id+'\')">重新开班</button>':'<button class="btn-sm btn" onclick="closeClassDialog(\''+c.id+'\')">关班</button>')
       +'<button class="btn-sm btn btn-danger" onclick="delClass(\''+c.id+'\')">删除</button></div>';
   }).join('')).join('');
   const chips=db.campuses.map(cp=>{
@@ -1548,7 +1613,7 @@ function openClassMgr(){
     return '<span class="badge b-blue" style="padding:4px 10px">'+esc(cp.name)+'（'+n+' 个班）<b style="cursor:pointer;margin-left:6px" onclick="delCampus(\''+cp.id+'\')">✕</b></span>';
   }).join(' ');
   showModal('班级管理与校区',
-    '<p class="sub" style="margin-bottom:10px">先建校区，再建班级并选所属校区；学员归入班级后，课表、反馈和计费统计都会按班级/校区组织。</p>'
+    '<p class="sub" style="margin-bottom:10px">先建校区，再建班级并选所属校区；学员归入班级后，课表、反馈和计费统计都会按班级/校区组织。<br>关班会把这个班的在读/试听学员统一设为停课；停课学员的年级会按届数在新学年自动跟着升级。</p>'
     +'<div class="frow" style="margin-bottom:8px">'
     +'<div class="fi"><label>新增校区</label><input id="campus-name" placeholder="如：城东校区 / 总部"></div>'
     +'<div class="fi" style="display:flex;align-items:flex-end"><button type="button" class="btn" onclick="addCampus()">＋ 添加校区</button></div>'
@@ -1584,6 +1649,68 @@ function saveClassEdit(e,id){
   const c=db.classes.find(x=>x.id===id);
   c.grade=f.grade.value;c.name=f.name.value.trim();c.campusId=f.campus?f.campus.value:'';
   save();toast('已修改');openClassMgr();return false;
+}
+function closeClassDialog(id){
+  const c=db.classes.find(x=>x.id===id);
+  if(!c)return;
+  const list=db.students.filter(s=>s.classId===id&&(s.status==='active'||s.status==='trial'));
+  showModal('关班 · '+esc(c.grade+c.name),
+    '<div class="form">'
+    +'<div class="fi"><label>关班日期（该班学员从这天起统一停课）</label><input type="date" id="cls-close-date" value="'+todayStr()+'"></div>'
+    +'<p class="sub">「'+esc(c.grade+c.name)+'」当前有 <b>'+list.length+'</b> 名在读/试听学员，确认后统一改为「停课」并记录停课起始日期；从关班日期起、还没上的课次会自动取消（已上或已录考勤的课保留），课表里不再出现该班；历史考勤、反馈、小测不受影响。班级会标记为「已关班」，之后可重新开班。</p>'
+    +'<div class="m-actions"><button type="button" class="btn" onclick="openClassMgr()">取消</button><button type="button" class="btn btn-danger" onclick="confirmCloseClass(\''+id+'\')">确认关班</button></div>'
+    +'</div>');
+}
+function confirmCloseClass(id){
+  const c=db.classes.find(x=>x.id===id);
+  if(!c)return;
+  const d1=($('#cls-close-date')&&$('#cls-close-date').value)||todayStr();
+  let n=0;
+  db.students.forEach(function(s){
+    if(s.classId===id&&(s.status==='active'||s.status==='trial')){s.status='paused';s.pausedFrom=d1;n++}
+  });
+  c.closedAt=d1;
+  // 关班日期起未上的课次自动取消，不再出现在课表；已上/已考勤的不动
+  let cancelled=0;
+  db.lessons.forEach(function(l){
+    if(l.status==='cancelled'||l.date<d1)return;
+    if(lessonDone(l))return;
+    if(l.attendance&&Object.keys(l.attendance).length)return;
+    const ids=lessonClassIds(l);
+    if(ids.indexOf(id)<0)return;
+    const allClosed=ids.every(function(cid){const cc=db.classes.find(x=>x.id===cid);return !cc||cc.closedAt});
+    if(allClosed){l.status='cancelled';l.closedByClass=id;cancelled++}
+  });
+  save();closeModal();openClassMgr();renderPage();
+  toast('已关班：'+n+' 名学员转为停课'+(cancelled?('，'+cancelled+' 节未上的课已取消'):''));
+}
+function reopenClassDialog(id){
+  const c=db.classes.find(x=>x.id===id);
+  if(!c)return;
+  const paused=db.students.filter(s=>s.classId===id&&s.status==='paused').length;
+  showModal('重新开班 · '+esc(c.grade+c.name),
+    '<p class="sub">清除「已关班」标记。该班目前有 <b>'+paused+'</b> 名停课学员：可以选择只重新开班（学员保持停课，之后单独复课），或同时把停课学员全部复课。</p>'
+    +'<div class="m-actions"><button class="btn" onclick="openClassMgr()">取消</button><span style="flex:1"></span>'
+    +'<button class="btn" onclick="doReopenClass(\''+id+'\',0)">仅重新开班</button>'
+    +'<button class="btn btn-primary" onclick="doReopenClass(\''+id+'\',1)">开班并复课</button></div>');
+}
+function doReopenClass(id,resume){
+  const c=db.classes.find(x=>x.id===id);
+  if(!c)return;
+  c.closedAt=null;
+  let n=0;
+  if(resume){
+    db.students.forEach(function(s){
+      if(s.classId===id&&s.status==='paused'){s.status='active';n++}
+    });
+  }
+  // 恢复因关班被取消且还没上的课次
+  let restored=0;
+  db.lessons.forEach(function(l){
+    if(l.closedByClass===id&&l.status==='cancelled'&&!lessonDone(l)){l.status='normal';delete l.closedByClass;restored++}
+  });
+  save();closeModal();openClassMgr();renderPage();
+  toast('已重新开班'+(n?('，'+n+' 名学员复课'):'')+(restored?('，'+restored+' 节课已恢复到课表'):''));
 }
 function delClass(id){
   const c=db.classes.find(x=>x.id===id);
@@ -1622,10 +1749,11 @@ function promoteStudent(id){
 function promoteClass(id){
   const c=db.classes.find(x=>x.id===id);
   const list=db.students.filter(s=>s.classId===id&&s.status==='active');
-  if(!list.length){toast('该班没有在读学员');return}
+  const pausedN=db.students.filter(s=>s.classId===id&&s.status==='paused').length;
+  if(!list.length){toast(pausedN?('该班只有在读学员参与手动升级；'+pausedN+' 名停课学员会按学年自动升级'):'该班没有在读学员');return}
   const top=list.filter(s=>s.grade==='高三').length;
   const up=list.length-top;
-  const msg='学年升级：将为「'+c.grade+c.name+'」的 '+up+' 名学员升入下一年段'+(top?('，并将 '+top+' 名高三学员标记为毕业'):'')+'。\n（班级归属不变，如需换班请编辑学员）确定？';
+  const msg='学年升级：将为「'+c.grade+c.name+'」的 '+up+' 名在读学员升入下一年段'+(top?('，并将 '+top+' 名高三学员标记为毕业'):'')+(pausedN?('。\n该班另有 '+pausedN+' 名停课学员，会按届数在新学年自动升级，不在此次手动升级中'):'')+'。\n（班级归属不变，如需换班请编辑学员）确定？';
   if(!confirm(msg))return;
   list.forEach(s=>{
     const i=GRADES.indexOf(s.grade);
@@ -1636,7 +1764,7 @@ function promoteClass(id){
       s.grade=to;
     }
   });
-  save();renderPage();toast('学年升级完成（初升高学员的学校已清空，请重新填写）');
+  save();renderPage();toast('学年升级完成（初升高学员的学校已清空）');
 }
 
 /* 学员个人档案 */
@@ -1782,7 +1910,7 @@ function weekGridHTML(){
   const ws=ui.sch.week,t=todayStr();
   const days=[0,1,2,3,4,5,6].map(i=>{
     const d=addDays(ws,i),ds=fmtDate(d);
-    const ls=db.lessons.filter(l=>l.date===ds).sort((a,b)=>a.start.localeCompare(b.start));
+    const ls=db.lessons.filter(l=>l.date===ds&&!hideClosedLesson(l)).sort((a,b)=>a.start.localeCompare(b.start));
     const blocks=SLOTS.map(sl=>{
       const inSlot=ls.filter(l=>l.start===sl.start&&l.end===sl.end);
       return '<div class="slotblk"><div class="slot-h">'+sl.label+'</div>'
@@ -1804,7 +1932,7 @@ function monthGridHTML(){
   for(let i=0;i<42;i++){
     const d=addDays(start,i),ds=fmtDate(d);
     const out=d.getMonth()!==a[1]-1;
-    const ls=db.lessons.filter(l=>l.date===ds&&l.status!=='cancelled').sort((x,y)=>x.start.localeCompare(y.start));
+    const ls=db.lessons.filter(l=>l.date===ds&&l.status!=='cancelled'&&!hideClosedLesson(l)).sort((x,y)=>x.start.localeCompare(y.start));
     cells+='<div class="mcell'+(out?' out':'')+(ds===t?' today':'')+'" title="点击查看这一周" onclick="goWeekOf(\''+ds+'\')">'
       +'<div class="mc-d">'+d.getDate()+'</div>'
       +ls.map(l=>{
@@ -1891,7 +2019,7 @@ function statsPanelHTML(){
   const mFrom=t.slice(0,7)+'-01';
   const mTo=t.slice(0,7)+'-'+String(new Date(a[0],a[1],0).getDate()).padStart(2,'0');
   const m=statsOf(mFrom,mTo);
-  const terms=db.courses.slice().sort((x,y)=>y.startDate.localeCompare(x.startDate)).map(tr=>{
+  const terms=db.courses.filter(tr=>usesOpenClass((tr.classIds&&tr.classIds.length)?tr.classIds:(tr.classId?[tr.classId]:[]))).sort((x,y)=>y.startDate.localeCompare(x.startDate)).map(tr=>{
     const s=SEASONS[tr.season];
     const ls=db.lessons.filter(l=>l.courseId===tr.id&&l.status!=='cancelled'&&lessonDone(l));
     let hours=0;
@@ -1913,7 +2041,7 @@ function statsPanelHTML(){
     +'</div>';
 }
 function statsOf(from,to){
-  const ls=db.lessons.filter(l=>l.date>=from&&l.date<=to&&l.status!=='cancelled');
+  const ls=db.lessons.filter(l=>l.date>=from&&l.date<=to&&l.status!=='cancelled'&&!hideClosedLesson(l));
   const sids=new Set();let head=0;
   ls.forEach(l=>{
     const c=courseOf(l);
@@ -1929,7 +2057,7 @@ function statsOf(from,to){
 }
 function classCbxGroups(selectedIds){
   return '<div class="gg">'+GRADES.map(g=>{
-    const cs=db.classes.filter(c=>c.grade===g);
+    const cs=db.classes.filter(c=>c.grade===g&&(!c.closedAt||selectedIds.indexOf(c.id)>=0));
     if(!cs.length)return '';
     const gc=GRADE_COLORS[g]||'#2563eb';
     return '<div class="gg-row"><span class="gg-label" style="color:'+gc+'">'+g+'</span><div class="gg-chips">'
@@ -2406,17 +2534,78 @@ function saveAttendance(id){
 }
 
 /* 出勤总表 */
-let attTableCur='';
+let attYear='',attSeason='',attStage='';
+function curSeasonKey(){
+  const m=new Date().getMonth()+1;
+  if(m===1)return 'winter';
+  if(m<=6)return 'spring';
+  if(m<=8)return 'summer';
+  return 'autumn';
+}
+function attCourseHasStage(c,stage){
+  if(stage==='all')return true;
+  const ids=(c.classIds&&c.classIds.length)?c.classIds:(c.classId?[c.classId]:[]);
+  return ids.some(function(id){
+    const cl=db.classes.find(x=>x.id===id);
+    if(!cl)return false;
+    const jr=cl.grade==='初二'||cl.grade==='初三';
+    return stage==='junior'?jr:!jr;
+  });
+}
+function attCourseList(){
+  return db.courses.filter(function(c){
+    if(attYear!=='all'&&String(c.startDate||'').slice(0,4)!==attYear)return false;
+    if(attSeason!=='all'&&c.season!==attSeason)return false;
+    if(!attCourseHasStage(c,attStage))return false;
+    return true;
+  }).sort((a,b)=>b.startDate.localeCompare(a.startDate));
+}
+function attYearOptions(){
+  const ys={};
+  db.courses.forEach(function(c){const y=String(c.startDate||'').slice(0,4);if(y)ys[y]=1});
+  ys[String(new Date().getFullYear())]=1;
+  return '<option value="all"'+(attYear==='all'?' selected':'')+'>全部年度</option>'
+    +Object.keys(ys).sort(function(a,b){return b.localeCompare(a)}).map(function(y){return '<option value="'+y+'"'+(attYear===y?' selected':'')+'>'+y+' 年</option>'}).join('');
+}
+function attSeasonOptions(){
+  return '<option value="all"'+(attSeason==='all'?' selected':'')+'>全部季节</option>'
+    +['spring','summer','autumn','winter'].map(function(k){return '<option value="'+k+'"'+(attSeason===k?' selected':'')+'>'+SEASONS[k].icon+' '+SEASONS[k].label+'</option>'}).join('');
+}
 function openAttTable(){
-  const cs=db.courses.slice().sort((a,b)=>b.startDate.localeCompare(a.startDate));
-  if(!cs.length){toast('还没有课程期（先去「课程期排课」建一个）');return}
-  const cur=cs.find(c=>c.startDate<=todayStr()&&db.lessons.some(l=>l.courseId===c.id&&l.status!=='cancelled'&&l.date>=todayStr()));
-  const defId=cur?cur.id:cs[0].id;
+  if(!db.courses.length){toast('还没有课程期（先去「课程期排课」建一个）');return}
+  if(!attYear)attYear=String(new Date().getFullYear());
+  if(!attSeason)attSeason=curSeasonKey();
+  if(!attStage)attStage='all';
   showModal('出勤总表',
-    '<div class="toolbar" style="margin-bottom:10px"><span class="sub">课程期：</span><select id="att-tb-course" onchange="renderAttTable()">'
-    +cs.map(c=>'<option value="'+c.id+'"'+((c.id===defId)?' selected':'')+'>'+esc(c.name)+' · '+esc(courseClassNames(c))+'</option>').join('')
-    +'</select><span class="sub">（✓出勤 · 视 · 假 · 试 · 补；按班级分表，横向可滑）</span></div><div id="att-tb-area"></div>',
-    function(){renderAttTable()},{large:true});
+    '<div class="toolbar" style="margin-bottom:8px;flex-wrap:wrap">'
+    +'<span class="sub">年度：</span><select id="att-year" onchange="onAttFilter()">'+attYearOptions()+'</select>'
+    +'<span class="sub">季节：</span><select id="att-season" onchange="onAttFilter()">'+attSeasonOptions()+'</select>'
+    +'<span class="sub">学段：</span><select id="att-stage" onchange="onAttFilter()"><option value="all"'+(attStage==='all'?' selected':'')+'>全部学段</option><option value="junior"'+(attStage==='junior'?' selected':'')+'>初中</option><option value="senior"'+(attStage==='senior'?' selected':'')+'>高中</option></select>'
+    +'<span class="sub">课程期：</span><select id="att-tb-course" onchange="renderAttTable()"></select>'
+    +'</div>'
+    +'<p class="sub" style="margin-bottom:6px">（✓出勤 · 视 · 假 · 试 · 补；行 = 学生，列 = 课次，表头悬停可看日期；按班级分表，横向可滑）</p>'
+    +'<div id="att-tb-area"></div>',
+    function(){onAttFilter()},{large:true});
+}
+function onAttFilter(){
+  const y=$('#att-year'),s=$('#att-season'),st=$('#att-stage');
+  if(y)attYear=y.value;
+  if(s)attSeason=s.value;
+  if(st)attStage=st.value;
+  const cs=attCourseList();
+  const sel=$('#att-tb-course'),area=$('#att-tb-area');
+  if(!cs.length){
+    sel.innerHTML='<option value="">（无匹配课程期）</option>';
+    sel.disabled=true;
+    if(area)area.innerHTML='<p class="sub">当前筛选下没有课程期，换个年度 / 季节 / 学段试试。</p>';
+    return;
+  }
+  sel.disabled=false;
+  const prev=sel.value;
+  const cur=cs.find(c=>c.startDate<=todayStr()&&db.lessons.some(l=>l.courseId===c.id&&l.status!=='cancelled'&&l.date>=todayStr()));
+  const defId=(prev&&cs.some(c=>c.id===prev))?prev:(cur?cur.id:cs[0].id);
+  sel.innerHTML=cs.map(c=>'<option value="'+c.id+'"'+(c.id===defId?' selected':'')+'>'+esc(c.name)+' · '+esc(courseClassNames(c))+'</option>').join('');
+  renderAttTable();
 }
 function renderAttTable(){
   const el=$('#att-tb-area');
@@ -2428,34 +2617,42 @@ function renderAttTable(){
   if(!ls.length){el.innerHTML='<p class="sub">该课程期还没有课次。</p>';return}
   const mkByL={};
   db.lessons.forEach(function(x){if(x.makeup){Object.keys(x.makeup).forEach(function(sid){const t=mkByL[x.makeup[sid]]=mkByL[x.makeup[sid]]||{};t[sid]=x;})}});
-  const classIds=c.classIds||[];
+  // 行 = 学生，列 = 每节课；表头只显示节次，鼠标悬停看日期
   let html='';
-  classIds.forEach(function(clId){
-    const stu=[],seen={};
-    db.students.forEach(s=>{if(s.classId===clId){seen[s.id]=1;stu.push(s)}});
-    stu.sort((a,b)=>a.name.localeCompare(b.name,'zh'));
+  (c.classIds||[]).forEach(function(clId){
+    const stu=db.students.filter(s=>s.classId===clId).sort((a,b)=>a.name.localeCompare(b.name,'zh'));
     if(!stu.length)return;
-    const head='<tr><th class="at-h">课次</th>'+stu.map(s=>'<th title="'+esc(s.grade+' '+clsNameById(s.classId))+(s.status==='paused'?'（停课）':(s.status==='graduated'?'（已毕业）':''))+'">'+esc(s.name)+'</th>').join('')+'<th class="at-sum">计费</th></tr>';
-    const rows=ls.map(function(l){
-      const seq=courseSeq(l);
-      const a=l.attendance||{};
-      let bill=0;
-      const cells=stu.map(function(s){
+    const head='<tr><th class="at-h">学生</th>'
+      +ls.map(function(l){
+        const seq=courseSeq(l);
+        return '<th title="'+esc(dateCN(l.date)+'（周'+WD_CN[dowOf(l.date)]+'） '+l.start+'–'+l.end)+'">'+(seq?('第'+seq.no+'节'):esc(l.date.slice(5)))+'</th>';
+      }).join('')
+      +'</tr>';
+    let body='';
+    stu.forEach(function(s){
+      const cells=ls.map(function(l){
+        const a=l.attendance||{};
         const v=a[s.id];
         const mk=mkByL[l.id]&&mkByL[l.id][s.id];
         if(mk&&(v===undefined||v==='leave'||v==='absent'))return '<td class="at-mk" title="'+dateCN(mk.date)+' 在 '+esc(clsNameById(mk.classId))+' 补课">补</td>';
-        if(v==='present'){bill++;return '<td class="at-p">√</td>'}
-        if(v==='video'){bill++;return '<td class="at-v">视</td>'}
+        if(v==='present')return '<td class="at-p">√</td>';
+        if(v==='video')return '<td class="at-v">视</td>';
         if(v==='leave'||v==='absent')return '<td class="at-l">假</td>';
         if(v==='trial')return '<td class="at-t">试</td>';
         if(l.status==='cancelled')return '<td class="at-x">—</td>';
         return '<td>'+(lessonDone(l)?'<span class="at-x">·</span>':'')+'</td>';
       }).join('');
-      return '<tr><td class="at-d">'+(seq?('第'+seq.no+'节 '):'')+dateCN(l.date)+'<span class="sub">'+WD_CN[dowOf(l.date)]+'</span></td>'+cells+'<td class="at-sum"><b>'+(bill||'')+'</b></td></tr>';
+      body+='<tr><td class="at-d" title="'+esc(s.grade+' '+clsNameById(s.classId))+(s.status==='paused'?'（停课）':(s.status==='graduated'?'（已毕业）':''))+'">'+esc(s.name)+'</td>'+cells+'</tr>';
+    });
+    const billCells=ls.map(function(l){
+      const a=l.attendance||{};let n=0;
+      stu.forEach(function(s){const v=a[s.id];if(v==='present'||v==='video')n++});
+      return '<td class="at-sum"><b>'+(n||'')+'</b></td>';
     }).join('');
+    body+='<tr><td class="at-d">计费</td>'+billCells+'</tr>';
     const cls=db.classes.find(x=>x.id===clId);
     html+='<div class="at-block"><div class="arc-g-h">'+esc(cls?cls.grade+cls.name:'（班级）')+'<span class="sub">'+stu.length+' 名学生</span></div>'
-      +'<div class="at-wrap"><table class="at-table">'+head+rows+'</table></div></div>';
+      +'<div class="at-wrap"><table class="at-table">'+head+body+'</table></div></div>';
   });
   el.innerHTML=html||'<p class="sub">该课程期还没有班级或学员。</p>';
 }
@@ -3177,20 +3374,144 @@ function saveQuiz(e){
   go(text,'','');
   return false;
 }
+/* ---- 小测题目切分：长文档分批分析，避免只把前几千字发给 AI 而漏题 ---- */
+function repairQuizDocText(text){
+  let s=String(text||'');
+  if(/<w:t[\s>]/.test(s)){
+    const out=[],re=/<w:t(?:\s[^>]*)?>([^<]*)/g;let m;
+    while((m=re.exec(s))){const t=m[1].trim();if(t)out.push(t)}
+    if(out.length>=3)return out.join('\n');
+  }
+  if(/<\/?(?:w|wp|a|pic|m|v|o|mc|r):[A-Za-z]/.test(s)){
+    return s.replace(/<[^>]{0,2000}>/g,' ').replace(/[ \t]{2,}/g,' ').replace(/\s*\n\s*/g,'\n').trim();
+  }
+  return s;
+}
+function qNoOfLine(line){
+  const s=String(line||'');
+  let m=s.match(/^\s*第\s*(\d{1,3})\s*题/);if(m)return +m[1];
+  m=s.match(/^\s*(\d{1,3})\s*[.．、)）](?!\d)/);if(m)return +m[1];
+  return 0;
+}
+function quizQuestionNos(text){
+  const nos=[];
+  String(text||'').split('\n').forEach(function(ln){
+    const n=qNoOfLine(ln);
+    if(n&&nos.indexOf(n)<0)nos.push(n);
+  });
+  return nos;
+}
+function splitQuizBatches(text,maxLen){
+  maxLen=maxLen||5000;
+  const blocks=[];let cur=[];
+  String(text).split(/\n+/).forEach(function(p){
+    if(cur.length&&qNoOfLine(p)){blocks.push(cur.join('\n'));cur=[]}
+    cur.push(p);
+  });
+  if(cur.length)blocks.push(cur.join('\n'));
+  const batches=[];let buf=[],len=0,nos=[];
+  const flush=function(){
+    if(!buf.length)return;
+    batches.push({text:buf.join('\n\n'),nos:nos.slice()});
+    buf=[];len=0;nos=[];
+  };
+  blocks.forEach(function(b){
+    if(buf.length&&len+b.length>maxLen)flush();
+    buf.push(b);len+=b.length+2;
+    const n=qNoOfLine(b.split('\n')[0]);
+    if(n&&nos.indexOf(n)<0)nos.push(n);
+  });
+  flush();
+  return batches;
+}
+function extractQuestionText(text,no,maxLen){
+  const lines=String(text||'').split('\n');
+  let on=false;const buf=[];
+  for(let i=0;i<lines.length;i++){
+    const n=qNoOfLine(lines[i]);
+    if(!on){
+      if(n===+no){on=true;const t=lines[i].replace(/^\s*(?:第\s*\d{1,3}\s*题|[（(]?\s*\d{1,3}\s*[）)]?)\s*[.．、:：]?\s*/,'').trim();if(t)buf.push(t)}
+    }else{
+      if(n)break;
+      const t=lines[i].trim();if(t)buf.push(t);
+    }
+  }
+  return buf.join(' ').slice(0,maxLen||1200);
+}
+function mergeQuizPoints(got,arr){
+  (arr||[]).forEach(function(p){
+    const no=parseInt(p&&p.no,10);
+    if(!(no>0))return;
+    const point=String(p.point||'').trim();
+    if(!point)return;
+    if(!got[no])got[no]={no:no,point:point,detail:String(p.detail||'').trim()};
+    else if(!got[no].detail)got[no].detail=String(p.detail||'').trim();
+  });
+}
+const QUIZ_POINT_SYS='你是一位中学物理教研老师。下面是一份物理小测的题目文字，请逐题拆解并给出考点。要求：\n'
+  +'1. 必须覆盖文中每一道题目，不得跳过、不得合并多道大题；有几道题就输出几条。\n'
+  +'2. no 使用文档里的原始题号（数字）；一道大题含多个小问时只输出该大题一条。\n'
+  +'3. point 是简短考点名（10 字以内），detail 是一句话（20-40 字）说明考查方向。\n'
+  +'4. 若文字中包含答案或解析，只分析题目本身，不为答案单独生成考点。\n'
+  +'5. 只输出 JSON：{"points":[{"no":1,"point":"…","detail":"…"}]}';
 async function analyzeQuizPoints(id){
   const q=db.quizzes.find(x=>x.id===id);
   if(!q)return;
-  if(!q.docText){toast('这条小测没有题目文字，请先在详情中粘贴或编辑考点');return}
-  toast('AI 正在分析考点，请稍候…');
+  const raw=String(q.docText||'');
+  const full=repairQuizDocText(raw);
+  if(!full.trim()){toast('这条小测没有题目文字，请先在详情中粘贴或编辑考点');return}
+  if(full!==raw)q.docText=full;
+  const docNos=quizQuestionNos(full);
+  const batches=splitQuizBatches(full,5000);
+  const got={};let failN=0;
+  toast('AI 正在分析考点'+(batches.length>1?('（共 '+batches.length+' 批）'):'')+'…');
   try{
-    const content=await callDeepSeek([
-      {role:'system',content:'你是一位中学物理教研老师。下面是一份物理小测的题目文字，请拆解每道题并分析考点。要求：\n1. 输出 JSON：{"points":[{"no":1,"point":"简短考点名（10字内）","detail":"一句话说明考查方向"}]}\n2. 只输出 JSON，不要其他文字。'},
-      {role:'user',content:'小测名称：'+q.name+'\n\n题目文字：\n'+q.docText.slice(0,6000)}
-    ],{json:true,temperature:0.3});
-    const data=parseAIJson(content);
-    q.points=(data.points||[]).map(p=>({no:+p.no||0,point:String(p.point||''),detail:String(p.detail||'')}));
+    for(let i=0;i<batches.length;i++){
+      const b=batches[i];
+      if(batches.length>1)toast('AI 正在分析考点 '+(i+1)+'/'+batches.length+' …');
+      const hint=b.nos.length?('本批包含题号：'+b.nos.join('、')+(docNos.length?('；全文共识别 '+docNos.length+' 道题'):'')+'\n'):'';
+      let content=null;
+      try{
+        content=await callDeepSeek([
+          {role:'system',content:QUIZ_POINT_SYS},
+          {role:'user',content:'小测名称：'+q.name+'\n'+hint+'\n题目文字：\n'+b.text}
+        ],{json:true,temperature:0.2});
+      }catch(err){failN++;continue}
+      try{mergeQuizPoints(got,parseAIJson(content).points)}catch(err){failN++}
+    }
+    let missing=docNos.filter(function(n){return !got[n]});
+    if(missing.length){
+      const chunks=[];let buf=[],len=0;
+      missing.forEach(function(n){
+        const t=extractQuestionText(full,n,1500);
+        if(!t)return;
+        if(buf.length&&len+t.length>4000){chunks.push(buf);buf=[];len=0}
+        buf.push({no:n,text:t});len+=t.length+40;
+      });
+      if(buf.length)chunks.push(buf);
+      for(let ci=0;ci<chunks.length;ci++){
+        const list=chunks[ci];
+        const nums=list.map(function(x){return x.no});
+        try{
+          const content=await callDeepSeek([
+            {role:'system',content:QUIZ_POINT_SYS},
+            {role:'user',content:'小测名称：'+q.name+'\n请只为以下题号生成考点，必须全部输出，不得遗漏：'+nums.join('、')+'\n\n题目文字：\n'+list.map(function(x){return '【第'+x.no+'题】\n'+x.text}).join('\n\n')}
+          ],{json:true,temperature:0.2});
+          mergeQuizPoints(got,parseAIJson(content).points);
+        }catch(err){failN++}
+      }
+    }
+    const newPoints=Object.keys(got).map(function(k){return got[k]}).sort(function(a,b){return a.no-b.no});
+    if(!newPoints.length){toast('分析失败：AI 未返回有效考点，原有考点未改动');openQuizDetail(id);return}
+    const oldMap={};(q.points||[]).forEach(function(p){oldMap[p.no]=p});
+    docNos.forEach(function(n){if(!got[n]&&oldMap[n])newPoints.push(oldMap[n])});
+    newPoints.sort(function(a,b){return a.no-b.no});
+    q.points=newPoints;
     save();renderPage();
-    toast('考点分析完成：共 '+q.points.length+' 题');
+    const miss=docNos.filter(function(n){return !got[n]});
+    toast('考点分析完成：解析 '+newPoints.length+' 题'
+      +(docNos.length?('（文档识别 '+docNos.length+' 题'+(miss.length?('，缺第 '+miss.join('、')+' 题，可手动补充'):'，已全覆盖')+'）'):'')
+      +(failN?('；'+failN+' 批调用失败'):''));
     openQuizDetail(id);
   }catch(err){toast('分析失败：'+err.message)}
 }
@@ -3326,6 +3647,7 @@ function renderKpStatsModal(){
 function openQuizDetail(id){
   const q=db.quizzes.find(x=>x.id===id);
   const pts=q.points||[];
+  const docNos=quizQuestionNos(q.docText||'');
   const resN=Object.keys(q.results||{}).length;
   const anN=Object.keys(q.analyses||{}).length;
   const ql=q.lessonId?db.lessons.find(x=>x.id===q.lessonId):null;
@@ -3342,7 +3664,7 @@ function openQuizDetail(id){
     +'</div>'
     +'<div class="fi"><label>题目文字（可编辑，AI 分析考点用；没有上传文档时在这里粘贴）</label>'
     +'<textarea id="qz-text" style="min-height:90px">'+esc(q.docText||'')+'</textarea></div>'
-    +'<div class="fi"><label>每题考点（可编辑，一行一题；格式：题号. 考点 | 说明）</label>'
+    +'<div class="fi"><label>每题考点（文档识别 '+(docNos.length||'—')+' 题 · 已解析 '+pts.length+' 题'+(docNos.length&&pts.length<docNos.length?'，有缺题可点「重新分析考点」补齐':'')+'；可编辑，一行一题，格式：题号. 考点 | 说明）</label>'
     +'<textarea id="qz-points" style="min-height:130px">'+esc(pts.map(p=>p.no+'. '+p.point+(p.detail?' | '+p.detail:'')).join('\n'))+'</textarea></div>'
     +'<div class="m-actions"><button type="button" class="btn" onclick="saveQuizPoints(\''+id+'\')">保存考点修改</button><span style="flex:1"></span>'
     +'<button class="btn btn-primary" onclick="closeModal()">关闭</button></div>');
@@ -3775,7 +4097,13 @@ function checkOrphanLessons(){
   }
 }
 db=load();
+const _autoGrade=autoAdvancePausedStudents();
 renderPage();
+if(_autoGrade.moved||_autoGrade.grad){
+  setTimeout(function(){
+    toast('已按学年自动调整停课学员：'+_autoGrade.moved+' 人升年级'+(_autoGrade.grad?('、'+_autoGrade.grad+' 人转为毕业'):''));
+  },800);
+}
 checkOrphanLessons();
 setTimeout(cloudCheckOnOpen,3000);
 </script>
