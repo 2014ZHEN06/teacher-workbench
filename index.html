@@ -380,6 +380,24 @@ function autoAdvancePausedStudents(){
   if(backfilled||moved||grad)save();
   return{backfilled:backfilled,moved:moved,grad:grad};
 }
+/* 旧版本关班时没有取消未来课次，启动时补做一次：已关班班级在关班日期后的未上课次自动取消 */
+function repairClosedClassLessons(){
+  let n=0;
+  db.classes.forEach(function(c){
+    if(!c.closedAt)return;
+    db.lessons.forEach(function(l){
+      if(l.status==='cancelled'||l.date<c.closedAt)return;
+      if(l.attendance&&Object.keys(l.attendance).length)return;
+      if(l.status==='done'||lessonFb(l))return;
+      const ids=lessonClassIds(l);
+      if(ids.indexOf(c.id)<0)return;
+      const allClosed=ids.every(function(cid){const cc=db.classes.find(x=>x.id===cid);return !cc||cc.closedAt});
+      if(allClosed){l.status='cancelled';l.closedByClass=c.id;n++}
+    });
+  });
+  if(n)save();
+  return n;
+}
 const SLOTS=[
   {id:'am1',label:'上午一',start:'08:00',end:'10:00'},
   {id:'am2',label:'上午二',start:'10:00',end:'12:00'},
@@ -419,9 +437,21 @@ function lessonBadge(l){
 }
 function courseOf(l){return l&&l.courseId?db.courses.find(x=>x.id===l.courseId):null}
 /* 已关班的课程期不再显示进度条；合班中至少一个班未关班则保留 */
+/* 班级实际停上的日期：手动关班用 closedAt；没点关班但全班学员都已停课/毕业时，按最后一个停课日期算 */
+function classStopDate(id){
+  const c=db.classes.find(x=>x.id===id);
+  if(!c)return null;
+  if(c.closedAt)return c.closedAt;
+  const stu=db.students.filter(s=>s.classId===id);
+  if(!stu.length)return null;
+  const off=stu.filter(s=>s.status==='paused'||s.status==='graduated'||s.status==='trialed');
+  if(off.length!==stu.length)return null;
+  const ds=off.map(s=>s.pausedFrom).filter(Boolean).sort();
+  return ds.length?ds[ds.length-1]:todayStr();
+}
 function usesOpenClass(ids){
   if(!ids||!ids.length)return true;
-  return ids.some(function(id){const c=db.classes.find(x=>x.id===id);return !c||!c.closedAt});
+  return ids.some(function(id){return !classStopDate(id)});
 }
 function lessonClassIds(l){
   const c=courseOf(l);
@@ -430,11 +460,19 @@ function lessonClassIds(l){
 /* 课表隐藏：班级已关班，且这天在关班日期之后（含当天）的课，不再显示；已上/已录考勤的保留 */
 function hideClosedLesson(l){
   if(l.attendance&&Object.keys(l.attendance).length)return false;
-  if(l.status!=='cancelled'&&lessonDone(l))return false;
+  if(l.status==='done')return false;
+  if(lessonFb(l))return false;
   const ids=lessonClassIds(l);
   if(!ids.length)return false;
-  const ds=ids.map(function(id){const c=db.classes.find(x=>x.id===id);return c&&c.closedAt});
-  if(ds.some(function(d){return !d}))return false;
+  const ds=[];
+  for(let i=0;i<ids.length;i++){
+    const c=db.classes.find(x=>x.id===ids[i]);
+    if(!c)continue; // 已删除的班级不再有人上课，忽略
+    const d=classStopDate(ids[i]);
+    if(!d)return false; // 还有正常上课的班，保留这节课
+    ds.push(d);
+  }
+  if(!ds.length)return false;
   return ds.every(function(d){return l.date>=d});
 }
 function courseSeq(l){
@@ -782,7 +820,7 @@ function buildStudentTplBlob(){
   ];
   return buildZip(files);
 }
-async function saveBlobAs(blob,fname){
+async function saveBlobAs(blob,fname,okMsg){
   try{
     if(window.showSaveFilePicker){
       const h=await window.showSaveFilePicker({suggestedName:fname});
@@ -795,12 +833,112 @@ async function saveBlobAs(blob,fname){
   a.download=fname;
   document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),3000);
-  toast('模板已下载');
+  toast(okMsg||'已下载');
   return true;
 }
 function downloadStudentTpl(){
-  saveBlobAs(buildStudentTplBlob(),'学员导入模板.xlsx');
+  saveBlobAs(buildStudentTplBlob(),'学员导入模板.xlsx','模板已下载');
 }
+/* 导出在读学生名单（xlsx，按学段/年级分块） */
+function buildActiveStudentsBlob(){
+  const enc=new TextEncoder();
+  const xesc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const active=db.students.filter(s=>s.status==='active');
+  const HEAD=['姓名','班级','学校','届数','家长关系','联系电话','备注'];
+  const rows=[],merges=[];let r=1;
+  const blank=function(){return [{v:'',s:0},{v:'',s:0},{v:'',s:0},{v:'',s:0},{v:'',s:0},{v:'',s:0},{v:'',s:0}]};
+  const addRow=function(cells,ht){
+    rows.push('<row r="'+r+'"'+(ht?(' ht="'+ht+'" customHeight="1"'):'')+'>'
+      +cells.map(function(c,i){return '<c r="'+String.fromCharCode(65+i)+r+'" s="'+(c.s||0)+'" t="inlineStr"><is><t xml:space="preserve">'+xesc(c.v)+'</t></is></c>'}).join('')
+      +'</row>');
+    r++;
+  };
+  const mergedRow=function(text,style,ht){
+    const rr=r;
+    addRow([{v:text,s:style},{v:'',s:style},{v:'',s:style},{v:'',s:style},{v:'',s:style},{v:'',s:style},{v:'',s:style}],ht);
+    merges.push('A'+rr+':G'+rr);
+  };
+  mergedRow('在读学生名单',1,30);
+  mergedRow('导出时间：'+todayStr()+'　·　共 '+active.length+' 人（不含试听、停课、毕业）',2,20);
+  const stages=[{name:'初中',grades:['初二','初三']},{name:'高中',grades:['高一','高二','高三']}];
+  stages.forEach(function(st){
+    const list=active.filter(s=>st.grades.indexOf(s.grade)>=0);
+    if(!list.length)return;
+    mergedRow(st.name+'（'+list.length+' 人）',3,24);
+    st.grades.forEach(function(g){
+      const gs=list.filter(s=>s.grade===g).sort(function(a,b){
+        return clsNameById(a.classId).localeCompare(clsNameById(b.classId),'zh')||a.name.localeCompare(b.name,'zh');
+      });
+      if(!gs.length)return;
+      mergedRow(g+'（'+gs.length+' 人）',4,20);
+      addRow(HEAD.map(function(h){return {v:h,s:5}}),20);
+      gs.forEach(function(s){
+        addRow([
+          {v:s.name,s:6},{v:clsNameById(s.classId),s:6},{v:s.school||'',s:6},
+          {v:s.cohort?(s.cohort+'届'):'',s:6},{v:s.relation||'',s:6},{v:s.phone||'',s:6},{v:s.notes||'',s:6}
+        ],18);
+      });
+      addRow(blank(),8);
+    });
+  });
+  const other=active.filter(s=>GRADES.indexOf(s.grade)<0);
+  if(other.length){
+    mergedRow('其他（'+other.length+' 人）',3,24);
+    addRow(HEAD.map(function(h){return {v:h,s:5}}),20);
+    other.sort(function(a,b){return String(a.grade||'').localeCompare(String(b.grade||''),'zh')||a.name.localeCompare(b.name,'zh')}).forEach(function(s){
+      addRow([
+        {v:s.name,s:6},{v:clsNameById(s.classId),s:6},{v:s.school||'',s:6},
+        {v:s.cohort?(s.cohort+'届'):'',s:6},{v:s.relation||'',s:6},{v:s.phone||'',s:6},{v:s.notes||'',s:6}
+      ],18);
+    });
+  }
+  mergedRow('合计：在读 '+active.length+' 人',3,22);
+  const cols='<cols><col min="1" max="1" width="12" customWidth="1"/><col min="2" max="2" width="18" customWidth="1"/><col min="3" max="3" width="20" customWidth="1"/><col min="4" max="4" width="10" customWidth="1"/><col min="5" max="5" width="12" customWidth="1"/><col min="6" max="6" width="16" customWidth="1"/><col min="7" max="7" width="26" customWidth="1"/></cols>';
+  const sheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    +cols+'<sheetData>'+rows.join('')+'</sheetData>'
+    +(merges.length?('<mergeCells count="'+merges.length+'">'+merges.map(function(m){return '<mergeCell ref="'+m+'"/>'}).join('')+'</mergeCells>'):'')
+    +'<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>'
+    +'<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>';
+  const styles='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    +'<fonts count="4">'
+    +'<font><sz val="11"/><color rgb="FF1F2937"/><name val="微软雅黑"/></font>'
+    +'<font><b/><sz val="11"/><color rgb="FF1F2937"/><name val="微软雅黑"/></font>'
+    +'<font><b/><sz val="16"/><color rgb="FF1E3A8A"/><name val="微软雅黑"/></font>'
+    +'<font><sz val="10"/><color rgb="FF6B7280"/><name val="微软雅黑"/></font>'
+    +'</fonts>'
+    +'<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
+    +'<fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill>'
+    +'<fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill></fills>'
+    +'<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>'
+    +'<border><left style="thin"><color rgb="FFD8DEE9"/></left><right style="thin"><color rgb="FFD8DEE9"/></right><top style="thin"><color rgb="FFD8DEE9"/></top><bottom style="thin"><color rgb="FFD8DEE9"/></bottom><diagonal/></border></borders>'
+    +'<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+    +'<cellXfs count="7">'
+    +'<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+    +'<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'
+    +'<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'
+    +'<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>'
+    +'<xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>'
+    +'<xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'
+    +'<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>'
+    +'</cellXfs>'
+    +'<cellStyles count="1"><cellStyle name="常规" xfId="0" builtinId="0"/></cellStyles>'
+    +'</styleSheet>';
+  const files=[
+    {name:'[Content_Types].xml',data:enc.encode('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>')},
+    {name:'_rels/.rels',data:enc.encode('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')},
+    {name:'xl/workbook.xml',data:enc.encode('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="在读学生" sheetId="1" r:id="rId1"/></sheets></workbook>')},
+    {name:'xl/_rels/workbook.xml.rels',data:enc.encode('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>')},
+    {name:'xl/styles.xml',data:enc.encode(styles)},
+    {name:'xl/worksheets/sheet1.xml',data:enc.encode(sheet)}
+  ];
+  return buildZip(files);
+}
+function exportActiveStudents(){
+  const blob=buildActiveStudentsBlob();
+  const n=db.students.filter(s=>s.status==='active').length;
+  saveBlobAs(blob,'在读学生名单_'+todayStr()+'.xlsx','名单已导出（'+n+' 人）');
+}
+
 async function parseImportFile(file){
   const nm=(file.name||'').toLowerCase();
   if(nm.endsWith('.csv'))return parseCsv(await file.text());
@@ -1053,10 +1191,10 @@ function dashboardHTML(){
   const greet=h<5?'夜深了':h<11?'上午好':h<13?'中午好':h<18?'下午好':'晚上好';
   const activeN=db.students.filter(s=>s.status==='active').length;
   const ws=mondayOf(now),we=addDays(ws,6);
-  const weekN=db.lessons.filter(l=>l.date>=fmtDate(ws)&&l.date<=fmtDate(we)&&l.status!=='cancelled').length;
+  const weekN=db.lessons.filter(l=>l.date>=fmtDate(ws)&&l.date<=fmtDate(we)&&l.status!=='cancelled'&&!hideClosedLesson(l)).length;
   const pending=db.lessons.filter(l=>lessonDone(l)&&l.status!=='cancelled'&&!lessonFb(l)&&!l.skipFb).sort((a,b)=>b.date.localeCompare(a.date)||b.start.localeCompare(a.start));
   const monthN=db.lessons.filter(l=>l.date.slice(0,7)===t.slice(0,7)&&lessonDone(l)&&l.status!=='cancelled').length;
-  const today=db.lessons.filter(l=>l.date===t&&l.status!=='cancelled').sort((a,b)=>a.start.localeCompare(b.start));
+  const today=db.lessons.filter(l=>l.date===t&&l.status!=='cancelled'&&!hideClosedLesson(l)).sort((a,b)=>a.start.localeCompare(b.start));
   const d7=new Date();d7.setDate(d7.getDate()-6);
   const from7=fmtDate(d7);
   const attPending=db.lessons.filter(l=>l.date>=from7&&l.status!=='cancelled'&&isPastLesson(l)&&(!l.attendance||!Object.keys(l.attendance).length)).sort((a,b)=>a.date.localeCompare(b.date)||a.start.localeCompare(b.start));
@@ -1094,8 +1232,8 @@ function dashboardHTML(){
       +'</div>'+(l.topic?'<div class="sub">'+esc(l.topic)+'</div>':'')
       +(leaveList(l)?'<div class="sub">请假：'+esc(leaveList(l))+'</div>':'')+'</div>';
   };
-  const t1l=db.lessons.filter(l=>l.date===t&&l.status!=='cancelled').sort((a,b)=>a.start.localeCompare(b.start));
-  const t2l=db.lessons.filter(l=>l.date===t2&&l.status!=='cancelled').sort((a,b)=>a.start.localeCompare(b.start));
+  const t1l=db.lessons.filter(l=>l.date===t&&l.status!=='cancelled'&&!hideClosedLesson(l)).sort((a,b)=>a.start.localeCompare(b.start));
+  const t2l=db.lessons.filter(l=>l.date===t2&&l.status!=='cancelled'&&!hideClosedLesson(l)).sort((a,b)=>a.start.localeCompare(b.start));
   const todayHTML='<div class="sub" style="font-weight:700;margin-top:2px">今天</div>'
     +(t1l.length?t1l.map(lessonItemHTML).join(''):'<p class="sub" style="margin-top:4px">今天没有排课，好好休息 🍵</p>')
     +'<div class="sub" style="font-weight:700;margin-top:10px">明天（周'+WD_CN[parseDate(t2).getDay()]+'）</div>'
@@ -1320,6 +1458,7 @@ function studentsHTML(){
     +(edit?'':('<button class="btn btn-primary" onclick="openStudentForm()">＋ 新增学员</button>'
     +'<button class="btn" onclick="openStudentForm(null,1)">👂 新增试听学员</button>'
     +'<button class="btn" onclick="openImportStudents()">📥 导入学员</button>'
+    +'<button class="btn" onclick="exportActiveStudents()">📤 导出在读名单</button>'
     +'<button class="btn" onclick="openClassMgr()">🏷 班级管理</button>'
     +'<button class="btn" onclick="startMultiEdit()">📝 逐人编辑</button>'))
     +'</div></div>'
@@ -1674,8 +1813,8 @@ function confirmCloseClass(id){
   let cancelled=0;
   db.lessons.forEach(function(l){
     if(l.status==='cancelled'||l.date<d1)return;
-    if(lessonDone(l))return;
     if(l.attendance&&Object.keys(l.attendance).length)return;
+    if(l.status==='done'||lessonFb(l))return;
     const ids=lessonClassIds(l);
     if(ids.indexOf(id)<0)return;
     const allClosed=ids.every(function(cid){const cc=db.classes.find(x=>x.id===cid);return !cc||cc.closedAt});
@@ -2670,7 +2809,7 @@ function shareModalRender(){
   let any=false;
   for(let i=0;i<7;i++){
     const d=addDays(ws,i),ds=fmtDate(d);
-    const ls=db.lessons.filter(l=>l.date===ds&&l.status!=='cancelled').sort((a,b)=>a.start.localeCompare(b.start));
+    const ls=db.lessons.filter(l=>l.date===ds&&l.status!=='cancelled'&&!hideClosedLesson(l)).sort((a,b)=>a.start.localeCompare(b.start));
     if(!ls.length)continue;
     any=true;
     L.push('',WEEK_CN[i]+' '+(d.getMonth()+1)+'/'+d.getDate());
@@ -4098,6 +4237,7 @@ function checkOrphanLessons(){
 }
 db=load();
 const _autoGrade=autoAdvancePausedStudents();
+const _repairClosed=repairClosedClassLessons();
 renderPage();
 if(_autoGrade.moved||_autoGrade.grad){
   setTimeout(function(){
